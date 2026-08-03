@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment / secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# Local database and user data
+*.db
+*.db-shm
+*.db-wal
+data/
+storage/transcripts/
+storage/recordings/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Test / coverage
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Claude Code local settings (keep shared settings.json, ignore personal overrides)
+.claude/settings.local.json
