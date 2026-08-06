@@ -50,6 +50,15 @@ the design from the start rather than retrofitted:
 - **Message Batches API** for bulk ingestion: 50% off, and ingestion is not
   latency-sensitive. This is the single largest cost lever and it fits the job model in
   spec §27 almost exactly.
+- **Lazy enrichment (ADR 0008) improves the cost model substantially.** Enrichment runs on
+  promotion, per candidate — not across the observed pool. Recall-first would be
+  unaffordable otherwise: ~800 observed units per video enriched eagerly is §38.10's cost
+  risk realized. Capture-everything and enrich-lazily stand or fall together.
+- **A second, distinct LLM use: batched sentence-level MWE proposal** (ADR 0009, funnel
+  layer 5). *"List the multiword expressions in these sentences"* over ~20 sentences per
+  call is roughly 5 calls per video, restricted to high-centrality sentences. Separately
+  prompt-versioned and separately evaluated from definition enrichment — the two have
+  different failure modes and should not share a quality number.
 - **Prompt caching** on the stable system prompt and instruction block. The candidate,
   its context, and its dictionary senses vary per request and go *after* the cache
   breakpoint.

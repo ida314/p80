@@ -64,12 +64,21 @@ Never mutated after ingestion. Corrections live in `transcript_corrections`.
 
 ### `tokens` <!-- ADDED -->
 `id`, `sentence_id`, `video_id`, `sequence_index`, `surface`, `normalized`, `lemma`,
-`pos`, `morph_json`, `is_entity`, `entity_type`, `start_char`, `end_char`,
-`start_ms`, `end_ms`, `is_target_language`
+`pos`, `morph_json`, `head_index`, `dep_relation`, `is_entity`, `entity_type`,
+`start_char`, `end_char`, `start_ms`, `end_ms`, `is_target_language`
 
 Required by Stage 4 (linguistic annotation) and by §22.1 coverage, which is computed over
 *all* eligible tokens, not just extracted items. The original spec never gives tokens a
 home even though several downstream calculations need them.
+
+`head_index` and `dep_relation` carry the dependency parse. They are **load-bearing, not
+optional**: MWE generation runs on the dependency graph rather than the token sequence,
+because German separable verbs are discontinuous — *Ich fange um acht Uhr an* splits
+`anfangen` across five tokens and no n-gram window recovers it (ADR 0009).
+
+This table is also the **observed tier for multiword expressions**. Because it is immutable,
+any span is reconstructible from `(sentence_id, start_index, end_index)`, so no span rows
+are needed — see `ngram_observations` below for the one thing that cannot be recomputed.
 
 ### `learning_items`
 Fields per `01-domain-model.md` §3.
@@ -94,13 +103,28 @@ Per `01-domain-model.md` §3.2. Stage 8 requires slots to be structural, not tex
 `prompt_version`, `created_at`
 
 ### `candidates`
-`id`, `profile_id`, `video_id`, `canonical_form`, `normalized_form`, `proposed_type`,
-`proposed_sense`, `score`, `score_breakdown_json`, `extraction_confidence`,
-`definition_confidence`, `status`, `rejection_reason`, `merged_into_item_id`,
+`id`, `profile_id`, `observed_unit_id`, `ngram_observation_id`, `video_id`,
+`canonical_form`, `normalized_form`, `proposed_type`, `proposed_sense`, `score`,
+`score_breakdown_json`, `extraction_confidence`, `definition_confidence`, `status`,
+`rejection_reason`, `merged_into_item_id`, `surfaced_at`, `surface_reason`, `enriched_at`,
 `pipeline_version`, `created_at`, `updated_at`
 
+**A candidate is a *promoted* observed unit, not everything the pipeline found** (ADR 0008).
+Exactly one of `observed_unit_id` (words) or `ngram_observation_id` (MWEs) is set.
+
+- `surfaced_at` — when promotion happened; null is impossible for a row in this table
+- `surface_reason ∈ { queue, video_floor, calibration_probe, user_request }` —
+  `07-extraction.md` §6 and §8.1. Probe rows are analysed separately, so this cannot be
+  inferred later
+- `enriched_at` — null until `ENRICH_CANDIDATE` completes. A promoted-but-unenriched
+  candidate is valid and visible, marked as awaiting enrichment (§27.4)
+
 `score_breakdown_json` is not optional. §36.3 requires the user to be able to inspect
-ranking components, which is impossible if only the final score is stored.
+ranking components, which is impossible if only the final score is stored — and under
+ADR 0008 the score decides visibility, so an unexplained score is an unexplained absence.
+
+`rejection_reason` is written **only by human action**. The pipeline no longer rejects on
+value.
 
 ### `candidate_occurrences`
 `candidate_id`, `sentence_id`, `start_ms`, `end_ms`, `surface_form`, `confidence`
@@ -117,12 +141,19 @@ Per the resolution in `01-domain-model.md` §2.1, the six per-skill state object
 two are practice-only and have no card.
 
 ### `cards`
-`id`, `profile_id`, `item_id`, `card_type`, `prompt_template_version`, `status`,
-`fsrs_state_json`, `due_at`, `last_reviewed_at`, `suspended_at`, `created_at`
+`id`, `profile_id`, `item_id`, `card_type`, `prompt_language`, `answer_language`,
+`prompt_template_version`, `status`, `fsrs_state_json`, `due_at`, `last_reviewed_at`,
+`suspended_at`, `created_at`
 
 `card_type ∈ { audio_recognition, contextual_cloze, productive_recall }` <!-- ADDED -->
 
-Unique: `(profile_id, item_id, card_type)`
+Unique: `(profile_id, item_id, card_type, prompt_language, answer_language)`
+
+`prompt_language` / `answer_language` are a **forward-compatibility hook** (ADR 0010). In
+MVP the pair is always `(target_language, native_language)` and nothing varies it. They are
+in the key from the first migration because direction-aware FSRS state cannot be
+retrofitted — "I know DE→EN but not DE→PT" is plausibly a distinct memory, and splitting one
+schedule into several after the fact loses the history.
 
 **RESOLVED — transfer is a mode, not a card type.** §19.5 describes a transfer card and
 §30.2 selects transfer cards as a distinct category, which reads as a fourth type. But
@@ -171,6 +202,61 @@ API keys are **never** stored here (§32.3) — they are read from `.env.local` 
 ## 2. Tables missing from the original spec
 
 Each of these is required by behaviour the spec mandates elsewhere.
+
+### `observed_units` <!-- ADDED -->
+`id`, `target_language`, `lemma`, `normalized_form`, `pos`, `unit_type`,
+`first_seen_video_id`, `first_seen_at`, `video_count`, `total_count`, `score`,
+`score_breakdown_json`, `scored_at`, `is_dirty`, `updated_at`
+
+Unique: `(target_language, lemma, pos)`
+
+The **observed tier** for single words (ADR 0008): every eligible lexical unit in every
+processed video, captured completely and cheaply. Deliberately minimal — key, counters, and
+score. No definition, no translation, no LLM output. Richer data is fetched on promotion.
+
+**Language-scoped, not profile-scoped.** Three reasons: the saturation curve is a property
+of a language and a corpus rather than of a learner; a second profile should not duplicate
+the pool; and cross-language concept linking (deferred, ADR 0010) needs language-scoped
+units as its substrate. Learner-specific state joins from `known_lexicon` at read time.
+
+`is_dirty` marks units needing rescore after a material learner-state change, so
+`RESCORE_OBSERVATIONS` can work incrementally rather than sweeping the whole pool.
+
+### `observed_unit_occurrences` <!-- ADDED -->
+`id`, `observed_unit_id`, `video_id`, `sentence_id`, `token_index`, `surface_form`,
+`start_ms`, `end_ms`
+
+Links an observed unit to every place it was seen. Distinct from `item_occurrences`, which
+exists only for approved items and carries `isPrimaryOccurrence` and confidence.
+
+### `ngram_observations` <!-- ADDED -->
+`id`, `target_language`, `hash`, `lemma_seq`, `n`, `video_count`, `total_count`,
+`promotion_source`, `first_seen_video_id`, `first_seen_sentence_id`, `first_seen_at`,
+`last_seen_at`, `score`, `score_breakdown_json`, `is_dirty`
+
+Unique: `(target_language, hash)`
+
+The **observed tier for MWEs**, and deliberately not a span table. A span is a *view* over
+`tokens`, reconstructible from `(sentence_id, start_index, end_index)` — so nothing is lost
+by declining to store it. The one thing that cannot be recomputed later is **cross-video
+recurrence**, because noticing a sequence in video 2 requires having noticed it at the time.
+That is all this table persists.
+
+`promotion_source ∈ { gazetteer, dependency, association, recurrence, llm }` records which
+funnel layer surfaced it (`07-extraction.md` §10.2), so layer precision is measurable
+individually rather than only in aggregate.
+
+This table is also the saturation curve for expressions, directly queryable.
+
+### `item_translations` <!-- ADDED -->
+`id`, `item_id`, `language`, `kind`, `text`, `source`, `is_user_edited`, `created_at`
+
+`kind ∈ { natural, literal }`
+
+Replaces the `naturalTranslation` and `literalTranslation` scalars on `learning_items`,
+which hardcoded a single native language into the item model. Forward-compatibility hook
+for laddering (ADR 0010) — free now, a migration plus backfill later. MVP writes one
+language.
 
 ### `review_sessions` <!-- ADDED -->
 `id`, `profile_id`, `started_at`, `completed_at`, `desired_minutes`, `include_new_items`,

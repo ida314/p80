@@ -18,7 +18,12 @@ architectural risk in the spec, and it must be settled before Stage 1 lays out t
 Downstream consumers of annotation quality:
 
 - §14.5 word candidates — needs POS and NER for suppression
-- §14.6 expression candidates — needs POS patterns for verb-particle frames
+- **§14.6 expression candidates — needs a full dependency parse.** Not "wants": ADR 0009
+  generates MWE candidates from the dependency graph rather than the token sequence,
+  because German separable verbs are discontinuous (*Ich fange um acht Uhr an* splits
+  `anfangen` across five tokens) and no n-gram window recovers them. The same applies to
+  French `ne … pas`, clitic placement in Spanish and Portuguese, and separated reflexives —
+  every language in ADR 0001's set.
 - §14.8 consolidation — needs lemmatization to merge inflected forms
 - §22.1 coverage — needs lemmas for every eligible token, not just candidates
 - §22.3 syntactic difficulty — wants dependency depth
@@ -68,6 +73,12 @@ genuinely viable and should be reconsidered — it is materially simpler.
 
 ## Consequences if B is accepted
 
+- **Dependency parsing is now load-bearing, which strengthens this decision materially.**
+  When this ADR was drafted, dependency output was a nice-to-have for §22.3 syntactic
+  difficulty. ADR 0009 makes it the generation mechanism for the product's highest-value
+  item type. Option A's TypeScript libraries do not produce usable dependency parses for
+  German, Portuguese, Spanish, or French — which removes most of the remaining case for it
+  unless the target is English only.
 - Repo gains `services/nlp/` (Python, FastAPI, spaCy) alongside `apps/`.
 - Setup documentation must cover Python and the model download. This is a real cost paid
   by every future contributor, including future agent sessions.

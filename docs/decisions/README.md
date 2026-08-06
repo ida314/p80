@@ -29,3 +29,7 @@ Never delete an ADR. The value is in the record of what was considered.
 | [0004](0004-frequency-source.md) | Frequency dataset | Proposed |
 | [0005](0005-llm-provider.md) | LLM provider and cost ceiling | Proposed |
 | [0006](0006-evaluation-corpus.md) | Hand-labelled evaluation corpus | Proposed |
+| [0007](0007-ui-topology.md) | UI topology: TUI for management, browser for media | Accepted |
+| [0008](0008-recall-first-extraction.md) | Recall-first extraction: three tiers, lazy enrichment | Accepted |
+| [0009](0009-mwe-identification.md) | Multiword expression identification and storage | Accepted |
+| [0010](0010-multilanguage-forward-compat.md) | Multi-language: two hooks now, laddering deferred | Accepted |

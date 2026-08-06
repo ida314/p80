@@ -65,79 +65,148 @@ production, and reduced repetition of the exact source sentence.
 
 ---
 
-## 2. Candidate priority (§14.12)
+## 2. Importance (§14.12)
 
-Decides curriculum **admission**, never review scheduling (§14.13).
+Ranks observed units. Decides **visibility** — which units are promoted into the candidate
+inbox (`07-extraction.md` §6) — and thereafter curriculum **admission**. Never review
+scheduling (§14.13).
+
+<!-- RESOLVED: spec §14.12 calls this "priority" and treats it as an admission score for
+     candidates that already survived the §14.10 gates. Under ADR 0008 nothing is filtered
+     on value, so this score is what decides whether a unit is ever seen at all. Renamed to
+     "importance" to reflect that it now carries the whole burden. -->
 
 ```
-priority =
-    0.25 × learner_need
-  + 0.20 × domain_relevance
-  + 0.15 × general_frequency_utility
-  + 0.15 × contextual_diversity
-  + 0.10 × phrase_or_construction_value
-  + 0.10 × reuse_potential
-  + 0.05 × source_salience
-  - quality_penalties
+importance =
+    0.22 × learner_need
+  + 0.18 × topical_centrality
+  + 0.15 × domain_relevance
+  + 0.13 × general_frequency_utility
+  + 0.12 × contextual_diversity
+  + 0.10 × unit_type_value
+  + 0.06 × reuse_potential
+  + 0.04 × source_salience
+  - confidence_discount
 ```
 
-Weights sum to 1.0. `quality_penalties` is capped at 0.5 so a penalized item is demoted,
-not silently deleted — rejection is a quality-gate decision (§14.10), not a scoring one.
+Weights sum to 1.0. **They are placeholders.** Nothing has been tuned, because tuning
+requires the evaluation corpus (ADR 0006). Treat the numbers as a starting point to be
+fitted, and do not read precision into them that the data does not yet support.
+
+`confidence_discount` — formerly `quality_penalties` — is capped at 0.5. It **demotes,
+never removes**: under ADR 0008 there is no score at which a unit is discarded.
+
+### 2.0 Three axes, stored separately
+
+The components group into three axes that genuinely pull apart, and §0 rule 2 requires the
+breakdown be stored rather than collapsed:
+
+| Axis | Components | Asks |
+|---|---|---|
+| **In the language** | `general_frequency_utility`, `reuse_potential` | Is this broadly useful to any speaker? |
+| **In the video** | `topical_centrality`, `contextual_diversity` | Is this what the source is actually about? |
+| **To the user** | `domain_relevance`, `source_salience`, `learner_need` | Does this learner want and need it? |
+
+*Techno* in a techno video has low general frequency and maximum centrality. *Und* is the
+exact inverse. A single collapsed number cannot express the difference, and the user cannot
+inspect a ranking they cannot decompose.
 
 ### 2.1 Learner need
 ```
 learner_need = 1 - P_known
 ```
 
-### 2.2 Domain relevance
+### 2.2 Topical centrality <!-- ADDED: not in the original spec -->
+
+How much this unit is *what the video is about*, as opposed to incidental. Distinct from
+`domain_relevance`, which measures fit against the user's declared interests — a video can
+be squarely about a topic the user never tagged.
+
+```
+centrality = log_odds_ratio(count_in_video, count_in_background_corpus)
+```
+
+Log-odds with an informative Dirichlet prior, normalized to `0..1`. The prior matters: raw
+ratios are unstable for units appearing once or twice, which is most of them.
+
+Deterministic, no LLM, and it needs only the background frequency data ADR 0004 already
+provides. This is the signal that promotes domain vocabulary a general frequency list would
+bury — the reason *Berghain* outranks a rare-but-incidental word in the same transcript.
+
+### 2.3 Domain relevance
 From occurrences in interest-tagged videos, weighted by
 `effective_interest_weight` (`02-database.md` §1), plus user starring, plus usefulness
 within the selected field. Log-scaled over occurrence counts.
 
-### 2.3 General frequency utility
+### 2.4 General frequency utility
 Higher-frequency language is worth more, with three qualifications: function words are
 handled by the suppression policy, not here; very common already-known items are already
 discounted through `learner_need`; rare domain terms can still rank highly through
-`domain_relevance`.
+`topical_centrality` and `domain_relevance`.
 
-### 2.4 Contextual diversity
+### 2.5 Contextual diversity
 Distinct videos, distinct sentences, distinct speakers (when known), distinct interest
 categories, distinct grammatical surroundings. Distinct *videos* carries the most weight —
 ten appearances in one video is not diversity (§4.5).
 
-### 2.5 Phrase or construction value
+### 2.6 Unit type value
 Higher for conventional multiword expressions, verb-preposition frames, reusable sentence
-frames, discourse markers, and high-value constructions.
+frames, discourse markers, and high-value constructions. Named `unit_type_value` rather
+than the spec's `phrase_or_construction_value` because it now scores single words too —
+under ADR 0008 every observed unit is ranked, not only phrases that survived a gate.
 
-### 2.6 Reuse potential
+### 2.7 Reuse potential
 Breadth of compatible contexts, productivity of construction slots, corpus or dictionary
 evidence, and LLM classification — the last with an inspectable rationale, never as an
 unexplained number.
 
-### 2.7 Source salience
+For unenriched observed units the LLM component is simply absent; the score is computed
+from the deterministic signals alone. Enrichment can only ever *raise* confidence in a
+score, never gate its existence.
+
+### 2.8 Source salience
 Raised when the user bookmarked the timestamp, manually selected the expression, replayed
 the segment repeatedly, marked the source important, or used "Approve and prioritize".
 
-### 2.8 Quality penalties
+### 2.9 Confidence discount
 Weak transcript alignment, definition uncertainty, excessive length, named-entity
 behaviour, duplicate likelihood, narrowness, offensive ambiguity, unclear phrase boundary.
 
+Capped at 0.5. A heavily discounted unit sinks in the queue and is still reachable through
+browse (`07-extraction.md` §8). It is never removed.
+
 ---
 
-## 3. Quality gates (§14.10)
+## 3. Validity gates (§14.10)
 
-Gates run **before** scoring and either reject or quarantine. A rejected candidate never
-reaches the inbox; a quarantined one is visible but cannot be approved until resolved.
+<!-- RESOLVED: spec §14.10 rejects or quarantines on eleven conditions, most of which are
+     value judgments. Under ADR 0008 only validity can drop a unit; every value judgment
+     becomes a ranking signal in §2. Full rationale in `07-extraction.md` §3. -->
 
-Reject or quarantine when: transcript confidence too low; definition confidence too low;
-no plausible meaning fits the context; duplicates an existing sense; proper name without
-domain value; sentence unusably long; context does not clarify meaning; candidate is a
-transcription error; ordinary compositional phrase with little reuse value; unresolved
-sensitive or offensive content; language does not match the profile.
+**Only four conditions drop a unit, and all four mean "this is not a language item."**
 
-Every gate decision is recorded with its reason. Gate rejection rates feed §31.4 product
-quality metrics — a gate that never fires and a gate that rejects everything are both
-bugs, and neither is visible without this data.
+| Condition | Test |
+|---|---|
+| Not the target language | `tokens.is_target_language = false` |
+| Pure numeral, URL, punctuation, markup residue | Token class from the language adapter |
+| Non-lexical token | POS outside the adapter's lexical set |
+| Transcription artifact | No dictionary match **and** no morphological parse **and** transcript confidence below threshold |
+
+The conjunction on the last row is deliberate. Any single signal alone drops real
+vocabulary: neologisms and loanwords miss the dictionary, proper nouns miss morphology, and
+noisy captions depress confidence on perfectly good words.
+
+Everything §14.10 additionally lists — too rare, proper name without domain value, ordinary
+compositional phrase, low definition confidence, no plausible sense fits the context,
+context does not clarify, sentence too long — is a **value signal** and affects §2 only.
+Sensitive or offensive content is **flagged** for user decision. Duplicates are
+**consolidated**, which is a different operation from rejection.
+
+All eleven of §14.10's conditions are accounted for: four here, five as value signals, one
+flagged, one consolidated.
+
+Every gate decision is recorded with its reason. Rates feed §31.4: a gate that never fires
+and a gate that drops everything are both bugs, and neither is visible without this data.
 
 ---
 
@@ -277,3 +346,46 @@ changed context; be completed without revealing the answer; preserve intended me
 Videos added, cards generated, total review count, streak length, minutes spent, tokens
 extracted. These reward workload rather than learning, and no dashboard should present
 them as success.
+
+---
+
+## 8. Saturation and calibration <!-- ADDED: consequences of ADR 0008 -->
+
+### 8.1 Saturation
+
+Observed units deduplicate globally per language, so **new units per video falls as the
+corpus grows**. Word counts follow Zipf and flatten within roughly a dozen videos; MWE
+counts fall far more slowly, because the sequence space is combinatorially larger.
+
+```
+saturation = new_observed_units_per_minute, by unit type and language
+```
+
+This is a **diagnostic, not a success metric** — §31.5's prohibition on optimizing for
+"number of extracted tokens" stands. Nothing should try to make this number go up. It is
+read to answer three questions:
+
+- Is a newly added source worth processing at all?
+- Has this learner exhausted a channel or a domain?
+- Is the MWE layer still productive after the word layer has flattened?
+
+That last one is a direct empirical test of §4.4's claim that multiword expressions carry
+disproportionate remaining value.
+
+### 8.2 Calibration probe
+
+Periodically mix a small number of randomly chosen **unsurfaced** observed units into the
+candidate queue, labelled as probes. Record the approval rate separately from the ordinary
+queue.
+
+```
+probe_approval_rate  ≈ ordinary_approval_rate   → ranking is burying useful units
+probe_approval_rate  ≪ ordinary_approval_rate   → ranking is working
+```
+
+This is the only mechanism that detects a systematically mis-weighted ranker. ADR 0008
+trades filtering's random loss for ranking's *systematic* burial, and systematic error is
+the harder of the two to notice — without this probe, burial is exactly as invisible as
+rejection was, and the architecture's central claim goes untested.
+
+Probe outcomes feed §31.4 product-quality metrics.

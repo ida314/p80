@@ -64,6 +64,14 @@ demonstrably thin — check before accepting, not after.
 
 ## Consequences
 
+- **Added requirement (ADR 0009): extract multiword headwords at index-build time.** The
+  gazetteer — every multiword entry compiled into a lemma trie — is layer 1 of the MWE
+  funnel and the single largest precision lever available, because its output is
+  dictionary-attested and therefore pre-grounded under §14.9. `DictionaryProvider` gains
+  `multiwordHeadwords()` for this. It is a build-time pass, not a runtime cost.
+- **Note for the future:** if laddering is ever pursued (ADR 0010), ingesting more than the
+  English Wiktionary edition becomes necessary — cross-language sense alignment cannot be
+  drawn from a single edition. Not a change now; recorded so it is not a surprise.
 - Setup gains a one-time download and index step, documented in the README.
 - `DictionaryProvider` (`docs/contracts/04-providers.md` §3) is implemented against a
   local index; the interface is unchanged, so an API-backed provider remains possible.

@@ -10,7 +10,8 @@
 Frequency data feeds three separate calculations, which is why the choice matters more
 than it first appears:
 
-1. **Candidate priority** — `general_frequency_utility` (spec §14.12).
+1. **Importance ranking** — `general_frequency_utility` and `topical_centrality`
+   (spec §14.12, `06-scoring.md` §2).
 2. **Initial `P_known`** — placement initializes known-probability *by frequency band*
    (§11.2, §14.11), and every unseen lemma falls back to its band prior.
 3. **Lexical coverage** — the difficulty model's central number (§22.1).
@@ -58,6 +59,16 @@ the frequency prior should be too.
 
 ## Consequences
 
+- **Added requirement: background *n-gram* counts, not only unigram frequency.** Two
+  consumers need them, both introduced after this ADR was drafted:
+  - `topical_centrality` (`06-scoring.md` §2.2) — log-odds of in-video against background
+    frequency, the signal that promotes domain vocabulary a general list would bury
+  - MWE association statistics (ADR 0009, funnel layer 3) — PMI or log-likelihood over
+    lemma sequences
+
+  Subtitle corpora support this directly: the same source that yields unigram frequency
+  yields bigram and trigram counts. Verify n-gram availability alongside the unigram list
+  when filling in ADR 0001's readiness checklist.
 - `LanguageAdapter.frequencyRank()` and `.frequencyBand()`
   (`docs/contracts/04-providers.md` §2) are implemented against this dataset. Band
   boundaries are defined once, in the adapter, and used identically by placement,

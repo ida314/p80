@@ -18,7 +18,8 @@ intended and what is now believed, without one silently overwriting the other.
 | `03-api.md` | HTTP surface, request/response shapes, error envelope | §29 |
 | `04-providers.md` | Media source, dictionary, LLM, and language adapter interfaces | §8, §16, §7.1 |
 | `05-cards-and-review.md` | Card types, review flow, FSRS integration, session generation | §18, §19, §30 |
-| `06-scoring.md` | Every formula: priority, struggle, recommendation, difficulty, `P_known` | §14.11–§14.12, §17, §22, §23.1, §24.2 |
+| `06-scoring.md` | Every formula: importance, struggle, recommendation, difficulty, `P_known`, saturation | §14.11–§14.12, §17, §22, §23.1, §24.2 |
+| `07-extraction.md` | Extraction architecture: three tiers, validity vs value, MWE funnel, job pipeline | §14, §27, §38.1 |
 
 ## Rules for changing a contract
 

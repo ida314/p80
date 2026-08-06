@@ -76,7 +76,17 @@ defect regardless of how well it works.
 
 ## 3. Architectural invariants
 
-- **Admission ≠ scheduling.** Priority score decides whether an item enters the
+- **Capture is complete; ranking decides visibility.** Extraction observes every eligible
+  lexical unit. Nothing is ever dropped for being *low value* — only for not being a
+  language item at all (wrong language, numeral, URL, transcription artifact). A false
+  positive costs a keystroke; a false negative is invisible forever. See ADR 0008 and
+  `docs/contracts/07-extraction.md`.
+- **Three tiers: observed → candidate → item.** Observed units are cheap key:value rows,
+  language-scoped, never enriched, reachable only by browse. Candidates are promoted and
+  enriched. Items are user-approved. Each transition has exactly one trigger.
+- **Enrichment is lazy.** Dictionary and LLM run on promotion, per candidate — never across
+  the observed pool. This is a precondition of recall-first, not an optimization.
+- **Admission ≠ scheduling.** Importance score decides whether an item enters the
   curriculum. FSRS decides when a card is next reviewed. Never wire one to the other.
 - **Skills schedule independently.** Audio recognition, cloze, and production each carry
   their own FSRS state. Never average them.
@@ -90,6 +100,9 @@ defect regardless of how well it works.
 - **Every job is idempotent, retryable, inspectable, and versioned.** Provider failure
   preserves completed stages and never fabricates a fallback definition.
 - **P80 works with no LLM configured.** This is tested, not assumed.
+- **Clients hold no domain logic.** Scoring, session generation, sibling burying, and FSRS
+  live in `packages/core`, reachable only through `/api/*`. A `curl` script must be able to
+  complete a full review session. See ADR 0007.
 
 ---
 
@@ -98,19 +111,27 @@ defect regardless of how well it works.
 Decided in `docs/decisions/`. Until an ADR is accepted, the choice is open — check there
 before assuming.
 
+Two clients over one API, split by whether the surface needs media (ADR 0007):
+
 ```
-apps/web      React + TypeScript + Vite, YouTube IFrame API, MediaRecorder
+apps/tui      management surfaces — candidate inbox, items, stats,
+              diagnostics, jobs, settings. Keyboard-only, no media.
+apps/web      media surfaces — review sessions, video loop, video detail.
+              React + TypeScript + Vite, YouTube IFrame API, MediaRecorder.
 apps/api      Node + TypeScript + Fastify + Zod
 apps/worker   Node + TypeScript, SQLite-backed job polling
 packages/core             domain logic, scoring, pipeline stages
 packages/database         schema + migrations
 packages/language-adapters
 packages/providers        dictionary, LLM, media adapters
-packages/shared-ui
+packages/shared-ui        web only
 ```
 
+Both clients talk to the same `/api/*` surface and nothing else. There is no UI-abstraction
+layer — two concrete clients, not a client framework.
+
 SQLite with explicit migrations. `ts-fsrs` for scheduling. No Redis. One root command
-starts web, API, and worker.
+starts the API, worker, and both clients.
 
 ---
 

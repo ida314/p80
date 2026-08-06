@@ -7,6 +7,10 @@ Source: original spec §29. Fastify + Zod, bound to loopback only (§32.5).
 - Base path `/api`. All request and response bodies are JSON.
 - Every request body and query string is validated with Zod at the route boundary. A
   route handler never sees unvalidated input.
+- **This surface is the only interface any client has.** Two clients exist — a TUI for
+  management surfaces and a browser app for media surfaces (ADR 0007) — and neither holds
+  domain logic. A response must therefore carry everything needed to render it; a client
+  must never have to recompute a score, a schedule, or a session plan.
 - MVP has one profile. Endpoints do not take a profile ID; the server resolves the single
   profile. Handlers still pass `profileId` down into the service layer so that adding
   multiple profiles later is a routing change, not a rewrite.
@@ -99,9 +103,13 @@ derived view; it never mutates the original `transcript_segments` row
 
 ## 4. Candidates
 
+A candidate is a **promoted** observed unit (ADR 0008), so this surface is a *queue*, not
+the full set of everything extraction found. The unsurfaced pool is reachable through §4.1.
+
 ```
-GET    /api/candidates                 # filters: status, type, videoId, minScore,
-                                       #          minConfidence, sort, cursor, limit
+GET    /api/candidates                 # THE QUEUE: global, ranked by importance DESC,
+                                       # across all videos. Filters: status, type,
+                                       # videoId, minScore, minConfidence, cursor, limit
 GET    /api/candidates/:id
 PUT    /api/candidates/:id             # edit canonical form, type, meaning, translation,
                                        # register, region, occurrence boundaries
@@ -126,6 +134,43 @@ does **not** create a learning item or any card.
 `POST /api/candidates/batch` requires an explicit `ids` array. There is no
 "apply to all matching the current filter" form — §25.3 requires batch approval to stay a
 deliberate act, and an implicit filter-wide apply is not one.
+
+### 4.0 Queue semantics
+
+`GET /api/candidates` returns **one global ranked queue across all videos**, not a per-video
+list. It is a cursor, not a list to empty: the user works down it until they have enough new
+items and stops. Defaulting the client to "unread count" framing would fight the product's
+own thesis of the *smallest* high-value curriculum (§1).
+
+Every response carries `surfaceReason` so the client can render probe rows distinctly and
+so probe outcomes stay separable in analysis (`06-scoring.md` §8.2).
+
+A candidate with `enrichedAt: null` is valid and must render — promoted but not yet
+enriched, marked as such. Provider failure during enrichment leaves it in this state
+permanently until retried; it is never dropped and never given a fabricated definition
+(§27.4).
+
+### 4.1 The observed pool <!-- ADDED: required by ADR 0008 -->
+
+```
+GET    /api/observed                   # browse/search the full pool; same filters as
+                                       # /api/items, plus: language, minScore, videoId,
+                                       # unitType, surfaced (bool)
+GET    /api/observed/:id               # includes occurrences and score breakdown
+POST   /api/observed/:id/promote       # force into the inbox; enriches on demand
+GET    /api/observed/saturation        # new units per minute, by unit type and language
+```
+
+**Without these endpoints the architecture reduces to filtering that also pays for
+storage.** If nothing below the surfacing threshold can be found, "soft filtering" is a
+distinction without a difference. This is the surface that makes recall-first real, and it
+is a requirement rather than a convenience.
+
+`POST /api/observed/:id/promote` triggers `ENRICH_CANDIDATE` synchronously enough that
+inspecting a tail unit is never blocked by the absence of a definition.
+
+`GET /api/observed/saturation` backs a diagnostic, not a success metric — §31.5's ban on
+optimizing for extracted-token counts still holds. Nothing should try to raise it.
 
 ## 5. Items
 

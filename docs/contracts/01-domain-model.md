@@ -12,7 +12,8 @@ Source: original spec §9 (terminology), §13 (item model), §15 (function-word 
 | **Learning item** | The canonical object representing something the learner may study. |
 | **Surface form** | A form as it actually appears in a source (`ran into him` for the item `run into someone`). |
 | **Occurrence** | One appearance of an item in a source, with timestamps and sentence context. |
-| **Candidate** | A proposed learning item that has not yet been approved by the user. |
+| **Observed unit** | Every eligible lexical unit found in a processed video. Captured completely and cheaply, never enriched, reachable only through browse and search. The bottom of the three tiers (ADR 0008). |
+| **Candidate** | An observed unit **promoted** above the surfacing threshold, enriched, and shown in the inbox awaiting a user decision. Not everything the pipeline found — only what ranking surfaced. |
 | **Card** | One retrieval task generated from a learning item. Carries its own schedule. |
 | **Rep** | One retrieval attempt made *before* the answer is revealed. Reading a definition is not a rep. |
 | **Successful rep** | A retrieval attempt meeting the card's success criteria. |
@@ -54,6 +55,9 @@ type CandidateStatus =
   | "quarantined"  // failed a quality gate; needs review before it can be shown
   | "merged";      // folded into an existing item or another candidate
 
+/** Written ONLY by human action. Under ADR 0008 the pipeline never rejects on value —
+ *  "too_rare" and "proper_name" are reasons a person declines an item, not reasons the
+ *  extractor discards one. */
 type RejectionReason =
   | "already_know"
   | "too_rare"
@@ -64,6 +68,23 @@ type RejectionReason =
   | "not_useful"
   | "duplicate"
   | "other";
+
+/** Why a unit was surfaced into the inbox. Probe rows are analysed separately from the
+ *  ordinary queue, so this cannot be inferred after the fact. */
+type SurfaceReason =
+  | "queue"               // ranked above the global threshold
+  | "video_floor"         // top-N of a newly ingested video
+  | "calibration_probe"   // randomly sampled from the unsurfaced pool (06-scoring §8.2)
+  | "user_request";       // user promoted it from browse
+
+/** Which MWE funnel layer surfaced a sequence (07-extraction.md §10.2). Recorded so layer
+ *  precision is measurable individually, not only in aggregate. */
+type MwePromotionSource =
+  | "gazetteer"
+  | "dependency"
+  | "association"
+  | "recurrence"
+  | "llm";
 ```
 
 ### 2.1 Skill state — RESOLVED
@@ -111,8 +132,8 @@ interface LearningItem {
   senseKey: string;
   partOfSpeech: string | null;
   meaning: string;
-  naturalTranslation: string | null;
-  literalTranslation: string | null;
+  // Translations are NOT scalar fields — see item_translations (ADR 0010).
+  // Scalars would hardcode a single native language into the item model.
   register: Register;
   dialectRegion: string | null;
   offensiveOrSensitive: boolean;
@@ -150,6 +171,31 @@ none does. **Uniqueness constraint:** `(profileId, targetLanguage, normalizedFor
 
 <!-- ADDED: the original spec requires sense separation but never says how senseKey is
      formed or what enforces uniqueness. -->
+
+### 3.1.1 Multiword expression identity <!-- ADDED -->
+
+An MWE's identity is its **lemma sequence**, not its surface span. `ran into him` and
+`keep running into` share the sequence `[run, into]` and are the same item.
+
+Because the sequence is derivable from `tokens`, MWEs have no observed-tier span rows —
+only a recurrence counter in `ngram_observations`. See ADR 0009 and `07-extraction.md` §10.
+
+A span qualifies as an MWE on **any one** of five tests (operationalizing §14.6's six-way
+disjunction):
+
+| Test | Evidence |
+|---|---|
+| Lexicalized | Dictionary headword exists for the sequence |
+| Non-compositional | Composed component senses diverge from the contextual gloss |
+| Grammatically fixed | Substituting a near-synonym for one component breaks the meaning |
+| Statistically bound | Association high after controlling for component frequency |
+| Pragmatically formulaic | Discourse marker or fixed formula, per language list |
+
+Disqualifiers: free syntactic combination frequent only because its parts are (*in the*);
+spans crossing a clause boundary; named entities; a verb plus its ordinary arguments.
+
+**Boundaries are expected to be wrong sometimes.** Annotator disagreement is high, so the
+design goal is propose-then-correct-in-one-keystroke rather than first-time correctness.
 
 ### 3.2 Constructions
 

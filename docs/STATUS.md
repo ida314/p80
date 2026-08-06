@@ -38,6 +38,13 @@ ADR 0002 is the one to decide first — it changes the shape of the repo.
       and 4 spec ambiguities resolved
 - [x] `CLAUDE.md` written
 - [x] Stage 0 brief + 6 ADRs drafted
+- [x] **ADR 0007 accepted** — TUI for management surfaces (candidate inbox, items, stats,
+      diagnostics, jobs, settings), browser for media surfaces (review, video loop).
+      Two clients, one API, no domain logic in either.
+- [x] **ADRs 0008–0010 accepted** — extraction rewritten from filter-first to recall-first.
+      Three tiers (observed → candidate → item), validity gates only, lazy enrichment,
+      global ranked queue with a per-video floor, MWE generation on the dependency graph.
+      New contract `07-extraction.md`; every other contract updated to match.
 
 ## Next actions
 
@@ -72,3 +79,13 @@ ADR 0002 is the one to decide first — it changes the shape of the repo.
   for why each is required.
 - Four spec ambiguities were resolved rather than left to chance: skill-state duplication,
   transfer-as-card-type, interest weight combination, and occurrence-to-sentence linkage.
+- ADR 0007 splits the UI in two, so Stage 1 scaffolds `apps/tui` **and** `apps/web`. The
+  TUI's first real surface is the candidate inbox in Stage 5; Stages 2–3 are browser work.
+- The contracts now diverge from the frozen spec in two named places, both ADR-backed:
+  §14.10's reject-on-value gates (ADR 0008) and §27.1's enrich-before-score job order
+  (ADR 0008, forced by lazy enrichment). Both are marked `RESOLVED` inline.
+- ADR 0001 was edited to select four target languages rather than one. That is a scope
+  expansion past spec §7.1 — worth deciding whether MVP *ships* multi-pair or merely
+  doesn't preclude it. The contracts already carry `profile_id` and `target_language`
+  where needed; the real cost is running the readiness checklist per language and making
+  `LanguageAdapter` a registry rather than a singleton.

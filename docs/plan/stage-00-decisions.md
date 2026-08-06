@@ -40,6 +40,11 @@ Additional work completed in this stage beyond the spec's list:
 - [x] Extract `docs/contracts/` from the frozen spec
 - [x] Close 11 schema gaps and resolve 4 spec ambiguities
 - [x] Establish `CLAUDE.md`, `STATUS.md`, ADR process
+- [x] Decide UI topology — ADR 0007, accepted. Affects the Stage 1 repo layout as much as
+      ADR 0002 does, so it belonged here rather than in Stage 1.
+- [x] Replace the filter-first extraction model with recall-first — ADRs 0008 (three tiers,
+      lazy enrichment), 0009 (MWE identification), 0010 (multi-language hooks). Adds
+      `docs/contracts/07-extraction.md` and diverges from spec §14.10 and §27.1.
 
 ## Exit criteria
 

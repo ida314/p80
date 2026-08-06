@@ -75,6 +75,16 @@ These are not negotiable and no ticket may relax them without a policy review re
 
 Pre-roll and post-roll are user-configurable settings, not constants.
 
+**This procedure is browser-only.** The IFrame Player API cannot run in a terminal, which
+is why review sessions and the video loop live in the web client while management surfaces
+live in the TUI (ADR 0007). `MediaRecorder` (§19.3–19.4) is browser-only for the same
+reason; voice is optional in MVP (§21.5), so this does not block TUI coverage elsewhere.
+
+Timestamped links — `https://youtu.be/<id>?t=<seconds>`, or `embed/<id>?start=&end=` — are
+within policy and are the right mechanism for **navigation** from any client ("open this
+occurrence"). They are not a substitute for the audio-recognition card, which needs
+programmatic seek-and-stop, replay, and a hidden-then-revealed transcript.
+
 ---
 
 ## 2. `LanguageAdapter` <!-- ADDED -->
@@ -96,8 +106,11 @@ interface LanguageAdapter {
   /** Which POS tags are suppressed as isolated candidates (01-domain-model.md §6). */
   isSuppressedAsIsolatedItem(token: AnnotatedToken): boolean;
 
-  /** Language-specific MWE surface patterns, e.g. verb-particle frames. */
-  expressionPatterns(): ExpressionPattern[];
+  /** Dependency relations that mark a lexicalized attachment — particle, fixed, flat,
+   *  verb-preposition frames. MWE generation runs on the dependency graph, NOT on the
+   *  token sequence: German separable verbs are discontinuous (`Ich fange … an`) and no
+   *  n-gram window recovers them. See ADR 0009. */
+  mweRelations(): MweRelationSpec[];
 
   /** Language-specific construction templates with slots. */
   constructionPatterns(): ConstructionTemplate[];
@@ -123,6 +136,12 @@ interface DictionaryProvider {
   readonly name: string;
   readonly version: string;
   lookup(query: DictionaryQuery): Promise<DictionaryEntry[]>;
+
+  /** ADDED (ADR 0009): every multiword headword for a language, emitted once at
+   *  index-build time and compiled into a lemma trie. This is layer 1 of the MWE funnel
+   *  and the single largest precision lever available — its output is dictionary-attested,
+   *  so it arrives pre-grounded under §14.9. Matching is one pass over the sentence. */
+  multiwordHeadwords(language: string): AsyncIterable<MultiwordHeadword>;
 }
 
 interface DictionaryQuery {
@@ -208,6 +227,11 @@ interface CandidateExplanation {
   needsHumanReview: boolean;
 }
 ```
+
+The two translation fields are scalar **here only** — this is a transient per-call DTO, and
+one call translates into exactly one language, the `nativeLanguage` given in the request.
+On persistence they become `item_translations` rows keyed by that language, never columns
+on `learning_items` (ADR 0010). Do not mirror this shape into storage.
 
 ### Injection resistance (§16.4, §32.6)
 

@@ -62,6 +62,25 @@ The `worth_learning: no` rows are the ones that make the corpus useful. Precisio
 prevents card explosion (§38.1), and precision cannot be measured from positive examples
 alone.
 
+### Labels must be exhaustive <!-- strengthened by ADR 0008 -->
+
+Under recall-first extraction, nothing is rejected on value — units are *buried* by
+ranking instead. Burial is only detectable if the corpus labels **every** unit in the
+transcript, not just the ones worth learning.
+
+> "Was something important buried at rank 300?" cannot be answered from positive labels.
+
+This upgrades `worth_learning: no` from a nice-to-have to the load-bearing half of the
+corpus, and changes the metric from precision@K to **rank correlation against human
+judgement** across the full transcript.
+
+### MWE boundary labels
+
+Label spans as well as words, and **record annotator disagreement rather than resolving it
+away**. Boundary disagreement is high even among proficient speakers (ADR 0009), so a
+corpus that hides it will report false regressions when the extractor picks a defensible
+alternative boundary. Where a boundary is genuinely contested, record both and mark it.
+
 **Storage:** `fixtures/eval/<language>/` — transcript plus a labels file, both committed.
 This is version-controlled test data, not scratch work.
 

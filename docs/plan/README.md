@@ -32,17 +32,30 @@ review. **The most important milestone in the project.** At the end of Stage 3 t
 learning loop works end to end with zero automation. Everything after this is replacing
 manual steps with automatic ones, which is a far safer thing to build.
 
+Stage 1 scaffolds **two** clients (ADR 0007): `apps/tui` for management surfaces and
+`apps/web` for media surfaces. Stage 2's transcript view and Stage 3's review UI are both
+browser work; the TUI's first real surface arrives with the candidate inbox in Stage 5.
+
 Treat 1–3 as one unit. Do not stop after Stage 2 and start extraction.
 
 ### M2 — Deterministic extraction · Stages 4–6
-Sentence reconstruction and annotation → word candidates and the candidate inbox →
-dictionary grounding. No LLM yet. If extraction is not useful without an LLM, an LLM will
-not fix it.
+Sentence reconstruction, annotation, and **dependency parsing** → observe every word and
+rank them → dictionary grounding → **deterministic MWE detection**. No LLM yet. If
+extraction is not useful without an LLM, an LLM will not fix it.
 
-### M3 — LLM and multiword units · Stages 7–8
-Structured disambiguation with an evaluation harness → multiword expressions and
-constructions. Stage 7 must land its evaluation harness *before* Stage 8, or expression
-quality becomes unmeasurable.
+Two changes from the spec's staging, both from ADR 0008 and ADR 0009:
+
+- Stage 5 *observes* rather than *filters*. Everything eligible is captured; the candidate
+  inbox shows what ranking promoted (`07-extraction.md` §6). Enrichment moves after ranking.
+- Stage 6 gains the **MWE gazetteer and dependency-relation detection**. Both are
+  deterministic and depend on the dictionary work Stage 6 already does, so deferring them
+  to Stage 8 would leave the gazetteer unused for a milestone and delay the highest-value
+  item type for no reason.
+
+### M3 — LLM and the MWE tail · Stages 7–8
+Structured disambiguation with an evaluation harness → association statistics, cross-video
+recurrence, LLM sentence-level MWE proposal, and constructions. Stage 7 must land its
+evaluation harness *before* Stage 8, or expression quality becomes unmeasurable.
 
 ### M4 — Adaptation · Stages 9–10
 Learner model and adaptive admission → video difficulty. This is where card explosion

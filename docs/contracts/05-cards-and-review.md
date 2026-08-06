@@ -7,14 +7,10 @@ generation).
 
 ## 1. Principles
 
-1. **Each card has exactly one primary retrieval objective.** A card that tests two
-   things measures neither.
-2. **A rep happens before the answer is revealed** (§9.9). Reading a definition or
-   replaying a clip after reveal is exposure, not retrieval, and is not logged as a rep.
-3. **Skills schedule independently** (§18.2). Never average audio recognition, cloze, and
-   production into one schedule.
-4. **Admission is not scheduling** (§14.13). Priority decides whether an item enters the
-   curriculum and how soon. Memory performance decides when a card is next seen. These
+1. **Each card has exactly one primary retrieval objective.** A card that tests two things measures neither.
+2. **A rep happens before the answer is revealed** (§9.9). Reading a definition or replaying a clip after reveal is exposure, not retrieval, and is not logged as a rep.
+3. **Skills schedule independently** (§18.2). Never average audio recognition, cloze, and production into one schedule.
+4. **Admission is not scheduling** (§14.13). Priority decides whether an item enters the curriculum and how soon. Memory performance decides when a card is next seen. These
    two must never be wired together.
 
 ## 2. Card generation rules (§18.3)
@@ -31,6 +27,20 @@ For each approved item:
 that the cloze is solvable — not merely that a sentence exists.
 
 Pronunciation imitation (§19.4) is a practice exercise with no card and no schedule.
+
+### 2.1 Card direction <!-- ADDED: forward-compatibility hook, ADR 0010 -->
+
+Every card carries `prompt_language` and `answer_language`, and both are part of its
+identity key. **In MVP the pair is always `(target_language, native_language)`** — nothing
+varies it, and no UI exposes it.
+
+The fields exist now because direction-aware FSRS state cannot be retrofitted. If cards
+ever pair arbitrary languages (laddering, ADR 0010), "I know DE→EN but not DE→PT" is
+plausibly a distinct memory and needs its own schedule; splitting one schedule into several
+after the fact discards the review history that made it worth keeping.
+
+Laddering itself is explicitly deferred — see ADR 0010 for why, including the 12× card
+multiplication and the cross-lingual sense-alignment problem.
 
 ## 3. Card specifications
 
@@ -232,3 +242,17 @@ C      expand context
 
 Also required: screen-reader labels, transcript resizing, adjustable pre-roll, adjustable
 playback speed through permitted player controls, reduced-motion mode, high contrast.
+
+## 12. Which client hosts what (ADR 0007)
+
+**Review sessions and the video loop are browser surfaces.** Audio/source-clip recognition
+requires the YouTube IFrame Player API, which cannot run in a terminal.
+
+Contextual cloze and productive recall are renderable as text, but §30.2 schedules them in
+the same session as audio-recognition cards. Splitting them across clients would force a
+surface switch mid-session, so they stay in the browser with the rest of review.
+
+The TUI covers the management surfaces — candidate inbox, items, stats, diagnostics, jobs,
+settings — which is where most interaction volume actually is. Both clients call the same
+API and hold no domain logic: the session plan, the card order, and the schedule are all
+computed server-side.
