@@ -229,24 +229,42 @@ units as its substrate. Learner-specific state joins from `known_lexicon` at rea
 Links an observed unit to every place it was seen. Distinct from `item_occurrences`, which
 exists only for approved items and carries `isPrimaryOccurrence` and confidence.
 
-### `ngram_observations` <!-- ADDED -->
+### `ngram_observations` <!-- ADDED; REVISED: ADR 0011 -->
 `id`, `target_language`, `hash`, `lemma_seq`, `n`, `video_count`, `total_count`,
 `promotion_source`, `first_seen_video_id`, `first_seen_sentence_id`, `first_seen_at`,
-`last_seen_at`, `score`, `score_breakdown_json`, `is_dirty`
+`last_seen_at`, `score`, `score_breakdown_json`, `is_dirty`,
+`idiomaticity`, `idiomaticity_evidence`, `idiomaticity_verified`
 
 Unique: `(target_language, hash)`
 
 The **observed tier for MWEs**, and deliberately not a span table. A span is a *view* over
 `tokens`, reconstructible from `(sentence_id, start_index, end_index)` — so nothing is lost
-by declining to store it. The one thing that cannot be recomputed later is **cross-video
-recurrence**, because noticing a sequence in video 2 requires having noticed it at the time.
-That is all this table persists.
+by declining to store it. What this table adds is an accumulated **cross-video recurrence**
+count, avoiding a rescan on every ingest.
 
-`promotion_source ∈ { gazetteer, dependency, association, recurrence, llm }` records which
-funnel layer surfaced it (`07-extraction.md` §10.2), so layer precision is measurable
-individually rather than only in aggregate.
+**This table is a materialized index over `tokens`, not an irreplaceable record.** ADR 0009
+described recurrence as impossible to recompute; that is true at ingest time but not
+permanently, since `tokens` is immutable, every past video is local, and `head_index` /
+`dep_relation` are stored. Any write policy is reversible by a backfill that re-derives
+spans and rebuilds the counts. This is what makes the write threshold
+(`07-extraction.md` §14) a performance decision rather than a recall decision, and it is the
+guarantee that no expression is permanently lost.
 
-This table is also the saturation curve for expressions, directly queryable.
+`score` holds **unithood** (`06-scoring.md` §9.1) — *is this a reusable unit* — not
+importance. This follows from the key: the table has no `profile_id`, so it structurally
+cannot hold a learner-specific number. Importance (`06-scoring.md` §2) is computed at
+promotion, when the candidate becomes profile-scoped.
+
+`idiomaticity` (`06-scoring.md` §9.2) is nullable until enrichment runs.
+`idiomaticity_evidence ∈ { dictionary, embedding, llm, none }`; `idiomaticity_verified` is
+true only for a dictionary hit, per the rule that the dictionary is the lexical authority.
+
+`promotion_source ∈ { gazetteer, contiguous, dependency, recurrence, llm }` records which
+funnel layer surfaced it (`07-extraction.md` §10.3), so layer precision is measurable
+individually rather than only in aggregate. It also selects the shrinkage prior in §9.1.
+
+This table is also the saturation curve for expressions, directly queryable — which is why
+rows are demoted by score rather than deleted by judgment.
 
 ### `item_translations` <!-- ADDED -->
 `id`, `item_id`, `language`, `kind`, `text`, `source`, `is_user_edited`, `created_at`

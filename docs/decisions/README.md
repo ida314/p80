@@ -33,3 +33,4 @@ Never delete an ADR. The value is in the record of what was considered.
 | [0008](0008-recall-first-extraction.md) | Recall-first extraction: three tiers, lazy enrichment | Accepted |
 | [0009](0009-mwe-identification.md) | Multiword expression identification and storage | Accepted |
 | [0010](0010-multilanguage-forward-compat.md) | Multi-language: two hooks now, laddering deferred | Accepted |
+| [0011](0011-mwe-unithood-and-idiomaticity.md) | MWE unithood and idiomaticity as separate scores | Proposed |

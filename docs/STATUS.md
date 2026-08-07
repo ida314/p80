@@ -5,7 +5,7 @@
 
 **Current stage:** Stage 0 — Lock scope and constraints
 **Milestone:** M0 — Decisions (no code)
-**Last updated:** 2026-08-03
+**Last updated:** 2026-08-06
 
 ---
 
@@ -30,6 +30,12 @@ Six decisions, all drafted as ADRs with recommendations, all awaiting a call:
 
 ADR 0002 is the one to decide first — it changes the shape of the repo.
 
+**Also awaiting a call, but not blocking M0:**
+[ADR 0011](decisions/0011-mwe-unithood-and-idiomaticity.md) — MWE unithood and idiomaticity
+as separate scores. Blocks Stages 6 and 8. Its one open decision (idiom dictionary only, or
+dictionary plus embedding path) is deliberately deferred to Stage 8 and decided by
+measurement, so accepting the ADR does not require answering it now.
+
 ## Done
 
 - [x] Repo initialized, `.gitignore`
@@ -45,6 +51,11 @@ ADR 0002 is the one to decide first — it changes the shape of the repo.
       Three tiers (observed → candidate → item), validity gates only, lazy enrichment,
       global ranked queue with a per-video floor, MWE generation on the dependency graph.
       New contract `07-extraction.md`; every other contract updated to match.
+- [x] **ADR 0011 drafted** — MWE identification reworked. Contiguous enumeration becomes the
+      base generator with dependency paths as the discontinuity extension; qualification
+      moves from a boolean disjunction to two ranked scores (unithood, idiomaticity) with
+      stored breakdowns. New `06-scoring.md` §9; `07-extraction.md` §10 rewritten;
+      `ngram_observations` gains idiomaticity columns.
 
 ## Next actions
 
@@ -68,7 +79,15 @@ ADR 0002 is the one to decide first — it changes the shape of the repo.
 
 ## Open questions
 
-- None beyond the six ADRs.
+- **Idiom dictionary only, or dictionary plus embedding/LLM non-compositionality?**
+  (ADR 0011). Not either/or — the dictionary is both a signal and the ground truth the other
+  signals are tuned against, so it is built first regardless. The real question is whether
+  the embedding path ships in MVP. Recommended resolution is a measurement, not a debate:
+  build the dictionary path in Stage 6, then measure its recall against the ADR 0006 idiom
+  labels at Stage 8. Nothing is blocked on answering it today.
+- **ADR 0006's labelling scope grew.** The evaluation corpus now needs MWE spans labelled on
+  two axes — unithood and idiomaticity — not one. Scope this before Stage 8; it is the item
+  most likely to be underestimated.
 
 ## Notes
 
@@ -84,6 +103,17 @@ ADR 0002 is the one to decide first — it changes the shape of the repo.
 - The contracts now diverge from the frozen spec in two named places, both ADR-backed:
   §14.10's reject-on-value gates (ADR 0008) and §27.1's enrich-before-score job order
   (ADR 0008, forced by lazy enrichment). Both are marked `RESOLVED` inline.
+- ADR 0011 amends ADR 0009 in two places rather than superseding it. Generation and storage
+  stand; what changes is that n-gram enumeration is no longer a rejected alternative (it is
+  the base generator), and 0009's claim that recurrence "cannot be recomputed" is corrected —
+  `ngram_observations` is a materialized index over the immutable `tokens` table, so every
+  write policy is reversible by backfill. That reframe is what makes the remaining threshold
+  questions performance decisions rather than recall decisions.
+- ADR 0011 also fixes a defect in `07-extraction.md` §10.1: MWE generation was specified as
+  extracting `(head, dependent)` arcs, which cannot express its own headline example
+  (*warten auf* is a two-hop `obl→case` path with the noun excluded) and breaks UD `fixed` /
+  `flat`, which are n-ary chains. `MweRelationSpec` was declared in `04-providers.md` with no
+  shape; it now has one.
 - ADR 0001 was edited to select four target languages rather than one. That is a scope
   expansion past spec §7.1 — worth deciding whether MVP *ships* multi-pair or merely
   doesn't preclude it. The contracts already carry `profile_id` and `target_language`

@@ -389,3 +389,145 @@ the harder of the two to notice — without this probe, burial is exactly as inv
 rejection was, and the architecture's central claim goes untested.
 
 Probe outcomes feed §31.4 product-quality metrics.
+
+---
+
+## 9. Unithood and idiomaticity — MWE candidates <!-- ADDED: ADR 0011 -->
+
+The first scores in this document that are properties of **the language and corpus** rather
+than of a learner. That is not a stylistic distinction: they are stored on
+`ngram_observations`, which is keyed `(target_language, hash)` with no `profile_id`, so it
+structurally cannot hold a learner-specific number. Importance (§2) is computed later, at
+promotion, when the candidate becomes profile-scoped.
+
+§0's rules apply unchanged — normalize to `0..1`, store the breakdown, log-scale counts,
+weights in one versioned config module, never presented as objective.
+
+Architecture and pipeline order are in `07-extraction.md` §10.
+
+### 9.1 Unithood
+
+*Does this sequence behave as a reusable unit, or is it an arbitrary sentence fragment?*
+Deterministic, no dictionary, no LLM, no embeddings. Computed at observation.
+
+#### Cohesion — weakest internal split
+
+For a span `S = w₁…wₙ`, consider all `n−1` binary splits into `(Lᵢ, Rᵢ)` and take the
+**minimum**, not the average. A span is only as bound as its weakest seam.
+
+```
+npmi(A, B) = log( p(AB) / (p(A)·p(B)) ) / ( −log p(AB) )      ∈ [−1, 1]
+
+cohesion(S) = ( min over i of npmi(Lᵢ, Rᵢ) + 1 ) / 2          → 0..1
+```
+
+NPMI rather than raw PMI because it is bounded, which §0 rule 1 requires, and because raw
+PMI is dominated by rare components. Probabilities are estimated over the accumulated local
+corpus, smoothed against the background counts from ADR 0004.
+
+**This is what consumes ADR 0004's n-gram requirement.** A unigram-only frequency source
+cannot compute `p(AB)` for spans longer than two, and this section does not degrade
+gracefully without it.
+
+#### Completeness — branching entropy on both edges
+
+The test the previous design had no equivalent of, and the failure mode association
+statistics produce most often. A span that is almost always a fragment of a longer
+expression has a nearly deterministic neighbour on that side.
+
+For every occurrence of `S`, record the immediately preceding and following token, with
+sentence boundary as a distinct symbol `⊥`. Let `k = |occurrences(S)|`:
+
+```
+H(X)      = −Σ p(x)·log p(x)
+H_norm(X) = H(X) / log(1 + k)              max entropy over k observations is log k
+
+completeness(S) = min( H_norm(left), H_norm(right) )
+```
+
+`min` for the same reason cohesion uses it: a unit must be free on **both** edges.
+*Fliegen mit einer Klappe* is nearly always preceded by *zwei*, so left entropy ≈ 0 and
+completeness collapses regardless of how cohesive the span is internally.
+
+#### Context diversity
+
+Distinct sentences, distinct videos, distinct grammatical environments; log-scaled per §0
+rule 3. Shares its counting with §2.5, which reads the same evidence for a different
+purpose — there it measures *learner value*, here it measures *unithood evidence*.
+
+Distinct from completeness by scope: completeness is diversity at the **immediate
+neighbour**, context diversity is diversity at the **sentence and video** level.
+
+#### Confidence — shrinkage, not a threshold
+
+Both cohesion and completeness are **undefined at one occurrence**: branching entropy over
+a single observation is exactly zero, and NPMI is unstable. Read naively, that zero says
+*not a unit* when it means *not yet measured*. The distinction is the whole recall argument.
+
+```
+c        = log(1 + occurrences) / log(1 + cap)          cap default 20
+measured = w_coh·cohesion + w_comp·completeness + w_div·context_diversity
+
+unithood = c · measured  +  (1 − c) · prior(promotion_source)
+```
+
+A shrinkage estimator toward a per-layer prior. An unmeasured span sits at its layer's
+prior, not at zero. Default prior ordering, to be tuned at Stage 8:
+
+```
+gazetteer  >  dependency  >  contiguous
+```
+
+A gazetteer hit is pre-attested and needs no corpus evidence to survive. A raw contiguous
+span starts low and must earn its way up.
+
+#### Optional quality classifier
+
+An LLM or trained classifier may reject grammatical but non-reusable fragments. It is a
+**bounded adjustment with an inspectable rationale**, never an unexplained number, and it is
+**optional** — with no LLM configured the term is absent and the deterministic signals rank
+alone. Same treatment as §2.7's LLM component.
+
+#### Worked examples
+
+| Span | Cohesion | Completeness | Verdict |
+|---|---|---|---|
+| *maschinelles Lernen* | high | high | unit |
+| *in der* | **low** | high | free syntactic combination |
+| *Fliegen mit einer Klappe* | high | **low** — always preceded by *zwei* | fragment |
+| *Dylan hat den Burger gegessen* | **low** | **low**, `c ≈ 0` | not a unit; unmeasured |
+
+The two signals are complementary and neither alone separates all four rows.
+
+#### Storage
+
+`ngram_observations.score` holds the total, `score_breakdown_json` the components plus `c`
+and the prior used. Per §0 rule 2 the breakdown is not optional — the user must be able to
+see *why* a span ranked where it did.
+
+### 9.2 Idiomaticity
+
+*Is the meaning derivable from the parts?* Runs only on promoted candidates, never across
+the observed pool, because every mechanization needs an enrichment resource.
+
+| Evidence | Mechanized as | Cost |
+|---|---|---|
+| **Dictionary** | Idiom or phraseme headword hit | Free, from ADR 0003 |
+| **Embedding** | `1 − cos( emb(S), compose(emb(wᵢ)) )` — low similarity ⇒ non-compositional | Local embedding model |
+| **LLM** | Schema-constrained comparison of the literal word-level reading against the conventional reading, with rationale | Per candidate |
+| **Classifier** | Supervised idiom/non-idiom — **deferred**, no training data until ADR 0006 is labelled | — |
+
+Combination follows the standing rule that the dictionary is the lexical authority and the
+LLM is an explainer:
+
+```
+dictionary hit   → idiomaticity = 1.0,  evidence = dictionary,  verified = true
+otherwise        → max of available signals, verified = false
+```
+
+An unverified result is **labelled unverified in the UI**, never presented as confident.
+
+**Idiomaticity never filters.** It raises `unit_type_value` (§2.6) and drives display.
+Per `07-extraction.md` §10.4 step 7 the pipeline emits reusable units and idioms as two
+outputs, idioms being the stricter subset — *warten auf* is not an idiom and is
+unambiguously a learning item.

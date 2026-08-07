@@ -77,12 +77,13 @@ type SurfaceReason =
   | "calibration_probe"   // randomly sampled from the unsurfaced pool (06-scoring §8.2)
   | "user_request";       // user promoted it from browse
 
-/** Which MWE funnel layer surfaced a sequence (07-extraction.md §10.2). Recorded so layer
- *  precision is measurable individually, not only in aggregate. */
+/** Which MWE funnel layer surfaced a sequence (07-extraction.md §10.3). Recorded so layer
+ *  precision is measurable individually, not only in aggregate, and because it selects the
+ *  unithood shrinkage prior (06-scoring.md §9.1). REVISED: ADR 0011. */
 type MwePromotionSource =
   | "gazetteer"
-  | "dependency"
-  | "association"
+  | "contiguous"        // base generator: contiguous sequences, ranked by unithood
+  | "dependency"        // extension: path patterns, recovers discontinuity
   | "recurrence"
   | "llm";
 ```
@@ -180,19 +181,22 @@ An MWE's identity is its **lemma sequence**, not its surface span. `ran into him
 Because the sequence is derivable from `tokens`, MWEs have no observed-tier span rows —
 only a recurrence counter in `ngram_observations`. See ADR 0009 and `07-extraction.md` §10.
 
-A span qualifies as an MWE on **any one** of five tests (operationalizing §14.6's six-way
-disjunction):
+**Two scores, not one boolean** <!-- REVISED: ADR 0011 -->. §14.6's six-way disjunction is
+retained as evidence, but each test feeds one of two independent scores rather than flipping
+a shared flag. A boolean cannot be ranked or inspected, and the two questions are genuinely
+separate — *warten auf* is a unit and not an idiom; *ins Gras beißen* is both.
 
-| Test | Evidence |
-|---|---|
-| Lexicalized | Dictionary headword exists for the sequence |
-| Non-compositional | Composed component senses diverge from the contextual gloss |
-| Grammatically fixed | Substituting a near-synonym for one component breaks the meaning |
-| Statistically bound | Association high after controlling for component frequency |
-| Pragmatically formulaic | Discourse marker or fixed formula, per language list |
+| Score | Asks | Evidence | Computed |
+|---|---|---|---|
+| **Unithood** | Reusable unit, or arbitrary fragment? | Cohesion (weakest internal split), completeness (branching entropy on both edges), context diversity, lexicalized/formulaic priors | Observation — deterministic |
+| **Idiomaticity** | Meaning derivable from the parts? | Dictionary hit, embedding non-compositionality, LLM literal-vs-conventional, grammatical fixedness | Promotion — needs enrichment |
 
-Disqualifiers: free syntactic combination frequent only because its parts are (*in the*);
-spans crossing a clause boundary; named entities; a verb plus its ordinary arguments.
+Formulas in `06-scoring.md` §9; pipeline in `07-extraction.md` §10.
+
+Neither score removes a row. Former disqualifiers are now scored: free syntactic combination
+(*in der*) falls out of low cohesion, and fragment-of-a-longer-unit (*Fliegen mit einer
+Klappe*) out of low completeness. Spans crossing a clause boundary and named entities remain
+hard exclusions, because those are validity questions rather than value questions.
 
 **Boundaries are expected to be wrong sometimes.** Annotator disagreement is high, so the
 design goal is propose-then-correct-in-one-keystroke rather than first-time correctness.
