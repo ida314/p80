@@ -1,0 +1,134 @@
+:root {
+  --bg: #12131a;
+  --panel: #1b1d27;
+  --fg: #e6e6ee;
+  --muted: #9a9ab0;
+  --accent: #7aa2f7;
+  --error: #f7768e;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f6f9;
+    --panel: #ffffff;
+    --fg: #1b1d27;
+    --muted: #5f6070;
+    --accent: #2f5fd0;
+    --error: #c0344f;
+    color-scheme: light;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+.app {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+.app__header {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+.app__brand {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.app__header nav {
+  display: flex;
+  gap: 1rem;
+}
+
+.app__header a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.app__header a.active {
+  color: var(--accent);
+}
+
+.app__status {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.panel {
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.panel--error {
+  border-left: 3px solid var(--error);
+}
+
+.panel--error pre {
+  white-space: pre-wrap;
+  color: var(--error);
+}
+
+h1 {
+  font-size: 1.15rem;
+  margin: 0 0 0.75rem;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1.25rem;
+  margin: 0;
+}
+
+.kv dt {
+  color: var(--muted);
+}
+
+.kv dd {
+  margin: 0;
+}
+
+.app__footer {
+  margin-top: 2.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+code {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+button {
+  font: inherit;
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}

@@ -186,11 +186,21 @@ included.
 
 ## 6. Commands
 
-Populated during Stage 1.
+Full setup, including the parts that are not `pnpm install`, is in `docs/SETUP.md`.
 
 ```
-# pnpm dev        start web + api + worker
-# pnpm test       unit + integration
-# pnpm db:migrate run migrations
-# pnpm db:backup  snapshot the SQLite file
+pnpm dev          start api + worker + web + nlp sidecar (four processes)
+pnpm test         vitest, unit + integration
+pnpm typecheck    tsc --noEmit across all nine TypeScript packages
+pnpm db:migrate   apply pending migrations
+pnpm db:backup    snapshot the SQLite file (VACUUM INTO, not a copy)
+pnpm dev:noop     enqueue a NOOP job so the worker has something to claim
+
+bash scripts/smoke.sh                                    end-to-end, against a running dev
+pnpm --filter @p80/tui dev health|jobs|profile           the management client
+uv run --project services/nlp pytest services/nlp/tests  sidecar tests
 ```
+
+`pnpm dev` does **not** start vLLM or `uselimit` — both are long-lived, expensive to
+start, and managed outside the dev command (§4). vLLM being down through Stages 1–6 is
+expected, not a misconfiguration.

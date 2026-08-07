@@ -1,0 +1,14 @@
+{
+  "name": "@p80/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@p80/core": "workspace:*",
+    "@p80/database": "workspace:*"
+  }
+}

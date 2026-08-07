@@ -1,0 +1,11 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Native/binary postinstall steps we have reviewed and allow.
+# better-sqlite3 compiles or downloads a prebuilt native binding; esbuild fetches its
+# platform binary. Both are build-time only and make no runtime network requests, so
+# spec §32.2's empty steady-state external-request list still holds.
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true

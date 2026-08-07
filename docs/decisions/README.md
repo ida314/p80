@@ -34,6 +34,12 @@ Never delete an ADR. The value is in the record of what was considered.
 | [0009](0009-mwe-identification.md) | Multiword expression identification and storage | Amended by 0011 | Accepted |
 | [0010](0010-multilanguage-forward-compat.md) | Multi-language: two hooks now, laddering deferred | | Accepted |
 | [0011](0011-mwe-unithood-and-idiomaticity.md) | MWE unithood and idiomaticity as separate scores | Two scores, contiguous base generator | Accepted |
+| [0012](0012-database-layer.md) | Database access layer | Drizzle over `better-sqlite3`; migrations hand-authored, never generated | Accepted |
 
-**All 11 ADRs are accepted as of 2026-08-07.** Two questions inside ADR 0011 remain open by
-design; both resolve by measurement at Stage 8 and neither blocks Stage 1.
+**All 12 ADRs are accepted as of 2026-08-07.** Two questions inside ADR 0011 remain open by
+design; both resolve by measurement at Stage 8.
+
+One decision is deliberately deferred rather than made: the **TUI framework**. ADR 0007
+requires the client but names no stack, and the surface that decides it is the candidate
+inbox in Stage 5. Stage 1 ships a framework-free CLI; ADR 0013 gets written when there is
+a real screen to choose against.

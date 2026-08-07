@@ -73,7 +73,7 @@ Metrics, export, accessibility pass, security review, policy review, dogfooding.
 | Stage | Title | Milestone | Brief | State |
 |---|---|---|---|---|
 | 0 | Lock scope and constraints | M0 | [stage-00](stage-00-decisions.md) | in progress |
-| 1 | Local application skeleton | M1 | — | not started |
+| 1 | Local application skeleton | M1 | [stage-01](stage-01-skeleton.md) | **done** |
 | 2 | Manual video and transcript ingestion | M1 | — | not started |
 | 3 | Manual learning-item prototype | M1 | — | not started |
 | 4 | Core transcript processing | M2 | — | not started |

@@ -1,0 +1,37 @@
+[project]
+name = "p80-nlp"
+version = "0.0.0"
+description = "P80 NLP sidecar — spaCy annotation behind LanguageAdapter (ADR 0002)"
+readme = "README.md"
+
+# Upper bound on purpose. spaCy's binary wheels lag new CPython releases by months, and
+# `de_core_news_lg` is distributed as a wheel too. This machine's default interpreter is
+# 3.14, which is ahead of that — pinning here means Stage 4's model install fails at
+# `uv sync` with a clear message rather than midway through a 500 MB download.
+requires-python = ">=3.11,<3.14"
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    # Stage 4 adds:
+    #   "spacy>=3.8",
+    #   de_core_news_lg, installed from its release URL (not on PyPI)
+    # Deliberately absent in Stage 1 — see README.
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "pytest>=8.3",
+]
+
+[project.scripts]
+p80-nlp = "p80_nlp.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/p80_nlp"]

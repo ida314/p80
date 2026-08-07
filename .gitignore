@@ -2,6 +2,14 @@
 node_modules/
 .pnpm-store/
 
+# Python — the NLP sidecar (ADR 0002). uv.lock IS committed: the sidecar's dependency
+# set is part of the reproducible setup, same as pnpm-lock.yaml.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
 # Build output
 dist/
 build/
