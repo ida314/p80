@@ -1,7 +1,8 @@
 # ADR 0002 — NLP stack
 
-**Status:** Proposed
+**Status:** Accepted — Option B, spaCy
 **Date:** 2026-08-03
+**Decided:** 2026-08-07
 **Blocks:** Stage 1 (repo layout, process topology), Stage 4 (annotation)
 
 ## Context
@@ -52,9 +53,10 @@ Rejected outright. Spec §35 Stage 4 explicitly requires structured token data *
 LLM dependency; cost would scale with transcript length rather than learning value
 (§38.10); and non-deterministic annotation makes the fixture tests in §34.2 meaningless.
 
-## Recommendation
+## Decision
 
 **Option B — a Python sidecar running spaCy, wrapped behind `LanguageAdapter`.**
+Model: `de_core_news_lg` (ADR 0001).
 
 Reasoning:
 
@@ -68,10 +70,18 @@ Reasoning:
 4. §26.1's stated goal is reducing integration cost. Fighting a TS-only NLP stack for a
    non-English language *is* the integration cost, just relocated somewhere harder to see.
 
-If the target language chosen in ADR 0001 turns out to be English, Option A becomes
-genuinely viable and should be reconsidered — it is materially simpler.
+ADR 0001 selected **German**, which settles the residual doubt: Option A was only viable for
+an English target, and German is the worst case for every TypeScript NLP library. The
+decision was not close.
 
-## Consequences if B is accepted
+**spaCy over Stanza**, with a named escape hatch. spaCy wins on ingestion throughput and
+ecosystem, and both run inside the same sidecar behind the same interface. ADR 0001 records
+German lemmatization as spaCy's weak point; if the ADR 0006 corpus shows lemma accuracy is
+the bottleneck at Stage 4, switching German to Stanza is a model swap and a
+`language_adapter_version` bump, not an architecture change. **This ADR chooses a topology;
+the model inside it stays measurable and replaceable.**
+
+## Consequences
 
 - **Dependency parsing is now load-bearing, which strengthens this decision materially.**
   When this ADR was drafted, dependency output was a nice-to-have for §22.3 syntactic

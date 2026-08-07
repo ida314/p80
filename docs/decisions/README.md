@@ -21,16 +21,19 @@ Never delete an ADR. The value is in the record of what was considered.
 
 ## Index
 
-| # | Decision | Status |
-|---|---|---|
-| [0001](0001-language-pair.md) | First target and native language | Proposed |
-| [0002](0002-nlp-stack.md) | NLP stack: TypeScript-only vs. Python sidecar | Proposed |
-| [0003](0003-dictionary-provider.md) | Dictionary provider | Proposed |
-| [0004](0004-frequency-source.md) | Frequency dataset | Proposed |
-| [0005](0005-llm-provider.md) | LLM provider and cost ceiling | Proposed |
-| [0006](0006-evaluation-corpus.md) | Hand-labelled evaluation corpus | Proposed |
-| [0007](0007-ui-topology.md) | UI topology: TUI for management, browser for media | Accepted |
-| [0008](0008-recall-first-extraction.md) | Recall-first extraction: three tiers, lazy enrichment | Accepted |
-| [0009](0009-mwe-identification.md) | Multiword expression identification and storage | Accepted |
-| [0010](0010-multilanguage-forward-compat.md) | Multi-language: two hooks now, laddering deferred | Accepted |
-| [0011](0011-mwe-unithood-and-idiomaticity.md) | MWE unithood and idiomaticity as separate scores | Proposed |
+| # | Decision | Outcome | Status |
+|---|---|---|---|
+| [0001](0001-language-pair.md) | First target and native language | German → English; one pair ships, adapter registry hook | Accepted |
+| [0002](0002-nlp-stack.md) | NLP stack: TypeScript-only vs. Python sidecar | Python sidecar, spaCy `de_core_news_lg` | Accepted |
+| [0003](0003-dictionary-provider.md) | Dictionary provider | Local Wiktextract index, **both** en + de editions | Accepted |
+| [0004](0004-frequency-source.md) | Frequency dataset | Self-built OpenSubtitles unigram + n-gram; SUBTLEX-DE as a test fixture | Accepted |
+| [0005](0005-llm-provider.md) | LLM provider and resource ceiling | **Local inference only** — vLLM, no cloud adapter, no API keys | Accepted |
+| [0006](0006-evaluation-corpus.md) | Hand-labelled evaluation corpus | Two videos, same channel, two labelling passes | Accepted |
+| [0007](0007-ui-topology.md) | UI topology: TUI for management, browser for media | Two clients, one API | Accepted |
+| [0008](0008-recall-first-extraction.md) | Recall-first extraction: three tiers, lazy enrichment | | Accepted |
+| [0009](0009-mwe-identification.md) | Multiword expression identification and storage | Amended by 0011 | Accepted |
+| [0010](0010-multilanguage-forward-compat.md) | Multi-language: two hooks now, laddering deferred | | Accepted |
+| [0011](0011-mwe-unithood-and-idiomaticity.md) | MWE unithood and idiomaticity as separate scores | Two scores, contiguous base generator | Accepted |
+
+**All 11 ADRs are accepted as of 2026-08-07.** Two questions inside ADR 0011 remain open by
+design; both resolve by measurement at Stage 8 and neither blocks Stage 1.

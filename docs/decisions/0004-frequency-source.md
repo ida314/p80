@@ -1,8 +1,9 @@
 # ADR 0004 — Frequency dataset
 
-**Status:** Proposed
+**Status:** Accepted — self-built from OpenSubtitles; SUBTLEX-DE as a test fixture
 **Date:** 2026-08-03
-**Depends on:** ADR 0001 (target language)
+**Decided:** 2026-08-07
+**Depends on:** ADR 0001 (German)
 **Blocks:** Stage 5 (word candidates), Stage 9 (learner model), Stage 10 (video difficulty)
 
 ## Context
@@ -51,11 +52,44 @@ Aligned to teaching sequences.
 Cost: coverage stops at a few thousand words, and the spec explicitly disclaims CEFR-level
 claims (§6). Useful as a *supplementary* signal, not as the frequency source.
 
-## Recommendation
+## Decision
 
-**Option A**, falling back to **B** if the language chosen in ADR 0001 has no subtitle-
-derived list. The register argument is decisive: every input to this system is speech, so
-the frequency prior should be too.
+**Option A, self-built.** Derive both unigram and n-gram (n = 2..6) counts from the German
+OpenSubtitles corpus, in one counting job, through the same tokenizer P80 uses at runtime.
+The register argument is decisive: every input to this system is speech, so the frequency
+prior should be too.
+
+One source, not two. ADR 0011 made background n-gram counts load-bearing — NPMI over
+arbitrary-length spans is what consumes them — and SUBTLEX-DE publishes unigrams only.
+Pairing a published unigram list with self-derived n-grams would put a **normalization seam
+straight through the middle of `topical_centrality`**, whose whole mechanism is a log-odds
+ratio of in-video against background frequency. Both terms must come from the same counting
+pass or the ratio compares two things that were never comparable.
+
+### SUBTLEX-DE is a test fixture, not a data source
+
+This is the part worth stating explicitly, because the obvious reading of "use SUBTLEX" is
+the wrong one.
+
+The value of a peer-reviewed, psycholinguistically validated list here is **not its
+numbers** — it is the confidence that P80's own numbers are not broken. So: build the
+counts, then correlate P80's unigram ranks against SUBTLEX-DE's published list **once**, as
+a committed test.
+
+- **Strong rank correlation** ⇒ the tokenizer, cleaning, and counting pipeline are sane.
+- **Divergence** ⇒ there is a bug — subtitle markup leaking in, casing not folded, umlaut
+  encoding mangled, speaker labels counted as words.
+
+A silent bug in frequency counting is close to undetectable downstream, because the three
+consumers named above fail in three unrelated-looking ways: mediocre candidate ranking, a
+placement test that keeps overestimating the learner, and difficulty labels that feel
+slightly off. Finding it in an afternoon via a correlation test is worth far more than
+borrowing the numbers, **and it costs no seam at all** — the fixture never enters the hot
+path.
+
+Storage: `fixtures/frequency/de/subtlex-de-ranks.csv`, with the correlation threshold
+recorded in the test rather than eyeballed. Treat a regression as a build failure, not a
+curiosity.
 
 ## Consequences
 
@@ -66,9 +100,15 @@ the frequency prior should be too.
   - MWE association statistics (ADR 0009, funnel layer 3) — PMI or log-likelihood over
     lemma sequences
 
-  Subtitle corpora support this directly: the same source that yields unigram frequency
-  yields bigram and trigram counts. Verify n-gram availability alongside the unigram list
-  when filling in ADR 0001's readiness checklist.
+  Self-building satisfies this by construction — the same pass emits both, from the same
+  tokenization, so cohesion and completeness are computed against the identical
+  distribution the unigram priors come from. This is the main reason the decision landed on
+  self-built rather than on a published list.
+- **Counts run through the runtime tokenizer** (ADR 0002's spaCy sidecar), not a
+  whitespace split. Otherwise background counts and in-video counts disagree about what a
+  token is, which reintroduces the seam this decision exists to avoid.
+- **The counting job is a documented setup step with a recorded corpus snapshot date.**
+  `frequency_dataset_version` records it, so a recount is a reprocessable event.
 - `LanguageAdapter.frequencyRank()` and `.frequencyBand()`
   (`docs/contracts/04-providers.md` §2) are implemented against this dataset. Band
   boundaries are defined once, in the adapter, and used identically by placement,

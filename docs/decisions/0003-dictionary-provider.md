@@ -1,8 +1,9 @@
 # ADR 0003 — Dictionary provider
 
-**Status:** Proposed
+**Status:** Accepted — Option A, both Wiktionary editions
 **Date:** 2026-08-03
-**Depends on:** ADR 0001 (target language)
+**Decided:** 2026-08-07
+**Depends on:** ADR 0001 (German → English)
 **Blocks:** Stage 6 (dictionary grounding)
 
 ## Context
@@ -52,15 +53,44 @@ configured".
 Free and current, but returns wikitext requiring parsing. Option A is the same data with
 the parsing already done.
 
-## Recommendation
+## Decision
 
-**Option A.** The deciding factor is that a dictionary lookup happens for every gated
-candidate on every ingestion, and spec §14.9 makes that lookup load-bearing rather than
-best-effort. Anything with a rate limit turns the primary quality mechanism into the
-pipeline's least reliable step.
+**Option A — a local Wiktextract/kaikki.org index — ingesting *both* the English and the
+German Wiktionary editions.**
 
-Reconsider only if ADR 0001 selects a language where Wiktionary sense coverage is
-demonstrably thin — check before accepting, not after.
+The deciding factor for Option A is that a dictionary lookup happens for every promoted
+candidate, and spec §14.9 makes that lookup load-bearing rather than best-effort. Anything
+with a rate limit turns the primary quality mechanism into the pipeline's least reliable
+step.
+
+### Both editions, with a stated precedence
+
+The two editions are not redundant, and neither alone is sufficient:
+
+| Edition | Contains | Weakness |
+|---|---|---|
+| **English** (`kaikki.org/dictionary/German`) | German headwords glossed **in English** | Thinner on German-specific senses, regional usage, and idiom coverage |
+| **German** (`kaikki.org/dewiktionary`) | German headwords defined **in German**, deeper sense inventory and phraseme coverage | Monolingual — unusable directly as a learner-facing gloss for an English native |
+
+**Precedence rule, and it is a hard one:**
+
+1. Prefer the English edition's sense and gloss. It is directly presentable, which is what
+   `DictionaryEntry.senses[].definition` is rendered as.
+2. Where the English edition has no entry, or no sense matching the candidate's POS, fall
+   back to the German edition. Such a sense is **flagged as native-language-absent**: the
+   German definition is real dictionary evidence and grounds the item under §14.9, but the
+   *English rendering of it* comes from the LLM and is therefore **unverified** under §16.5.
+3. **Never let the LLM's bridge translation be presented as the dictionary's definition.**
+   This is the failure mode the two-edition setup introduces, and it is the one thing that
+   would quietly convert the lexical authority into an explainer.
+
+Sense inventories differ between editions and are **not merged**. A sense carries its
+edition in `providerEntryId` and `senseId`, so provenance under §16.2 stays exact and a
+later coverage measurement can attribute recall to the right source.
+
+The German edition also earns its place for a second reason: it is the better source of
+**multiword headwords** for the ADR 0009 gazetteer, and the gazetteer is layer 1 of the MWE
+funnel and the single largest precision lever available.
 
 ## Consequences
 
@@ -72,6 +102,12 @@ demonstrably thin — check before accepting, not after.
 - **Note for the future:** if laddering is ever pursued (ADR 0010), ingesting more than the
   English Wiktionary edition becomes necessary — cross-language sense alignment cannot be
   drawn from a single edition. Not a change now; recorded so it is not a surprise.
+- **Setup gains two downloads and one index build**, not one. Both editions are indexed into
+  the same SQLite FTS store with an `edition` discriminator; the precedence rule above is a
+  query-time policy, not two providers.
+- **`DictionaryProvider` gains an edition-coverage metric.** How often the German edition is
+  the only source is the number that says whether the second dump was worth its cost, and
+  it is also the input to the §16.5 unverified rate. Track from the first index build.
 - Setup gains a one-time download and index step, documented in the README.
 - `DictionaryProvider` (`docs/contracts/04-providers.md` §3) is implemented against a
   local index; the interface is unchanged, so an API-backed provider remains possible.

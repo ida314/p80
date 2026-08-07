@@ -495,12 +495,22 @@ Stated plainly, because a contract that hides its own failure modes is not usefu
 
 Tunable against the evaluation corpus; recorded rather than silently defaulted.
 
+**Reviewed 2026-08-07.** Every live row below was examined and deliberately left open. Most
+cannot be evaluated before the ADR 0006 corpus exists, so setting them now would be guessing
+with extra steps. **The defaults are what ships if a measurement says nothing — not
+conclusions.**
+
+One limitation to record rather than discover: **the recurrence promotion threshold is not
+measurable against the ADR 0006 corpus at all.** Its default is 3 distinct videos and the
+corpus has two. It becomes answerable only once the real library has accreted enough
+videos, so treat the Stage 8 entry below as "revisit with real data", not "measure then".
+
 | Question | Current default | Resolved at |
 |---|---|---|
 | ~~`ngram_observations` write threshold — content-word filter?~~ | **Withdrawn (ADR 0011).** All dependency-derived spans get a row; the filter dropped real discourse markers for a saving that does not exist at this scale | — |
-| **Idiom dictionary first, or build the semantic signals directly?** ← *decision needed* | Dictionary first regardless, since it is also the ground truth the other signals are tuned against. Open part: whether the embedding path is MVP or deferred | Stage 8, decided by measured dictionary recall against the ADR 0006 idiom labels |
+| ~~Idiom dictionary first, or build the semantic signals directly?~~ | **Resolved as a decision rule (ADR 0011, 2026-08-07).** Dictionary first regardless — it is also the ground truth the other signals are tuned against. The embedding path's MVP status follows from a measurement, not a debate | Stage 8 exit criterion: dictionary-path idiom recall measured against ADR 0006 Pass B labels and **recorded** |
 | Layer 2 write threshold — contiguous enumeration is ~7,500 spans/video against ~150 from dependency, so Layer 3's sizing does not transfer | Persist on second sighting, via a rebuildable index over `tokens`; a once-ever span has no computable cohesion or completeness | Stage 8, measured |
 | Unithood shrinkage cap and per-layer priors (`06-scoring.md` §9.1) | cap = 20 occurrences; priors ordered gazetteer > dependency > contiguous | Stage 8 |
-| Recurrence promotion threshold — how many distinct videos? Must speakers differ? | 3 videos, speaker-agnostic | Stage 8 |
+| Recurrence promotion threshold — how many distinct videos? Must speakers differ? | 3 videos, speaker-agnostic | Not corpus-measurable (see above); revisit once the library is large enough |
 | Per-video floor size | 5 | Stage 5, from review-burden feel |
 | `RESCORE_OBSERVATIONS` scope — full pool or dirty-flagged subset? | Dirty-flagged; full rescore is manual maintenance | Stage 9 |

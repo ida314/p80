@@ -1,7 +1,8 @@
 # ADR 0011 — MWE unithood and idiomaticity as separate scores
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-06
+**Decided:** 2026-08-07
 **Extends:** ADR 0009 (does not supersede — generation and storage stand)
 **Depends on:** ADR 0002 (parser), ADR 0003 (dictionary), ADR 0004 (n-gram counts),
 ADR 0008 (recall-first)
@@ -237,7 +238,10 @@ idiomaticity pull apart on exactly the items that matter most.
 
 ## Open questions
 
-Both are recorded in `07-extraction.md` §14 and neither should be silently defaulted.
+Both are recorded in `07-extraction.md` §14 and neither should be silently defaulted. **Both
+were reviewed on 2026-08-07 and deliberately left open**, with their resolution mechanism
+confirmed rather than their answer guessed. Accepting this ADR does not require answering
+either today, and the resolutions below are now scheduled work rather than intentions.
 
 ### 1. Idiom dictionary first, or build the semantic signals directly?
 
@@ -254,14 +258,21 @@ forced: dictionary first regardless. The real question is whether the embedding 
 | Determinism | Total — works with no LLM configured | Must degrade gracefully; cannot be load-bearing |
 | Risk | Idiom dictionaries skew literary and colorful; thin on register-specific and recent formulas. Partly redundant with the Layer 1 gazetteer already built | Tuning requires labelled data that only exists once the dictionary path has run |
 
-**Recommended decision rule, rather than a decision now:** build the dictionary path in
-Stage 6, then at Stage 8 measure its recall against the idiom labels in the evaluation
-corpus. If it recovers most labelled idioms, defer embeddings past MVP and record the
-number. If it does not, build the embedding path with that measurement as its tuning
-target. Either way the dictionary is built first, so nothing is blocked on answering this
-today.
+**Resolved as a decision rule, 2026-08-07** — the rule is adopted, the answer stays
+measured. Build the dictionary path in Stage 6, then at Stage 8 measure its recall against
+the Pass B idiomaticity labels (ADR 0006). If it recovers most labelled idioms, defer
+embeddings past MVP and **record the number**. If it does not, build the embedding path with
+that measurement as its tuning target. Either way the dictionary is built first, so nothing
+is blocked on answering this today.
 
-**This is the question to answer.** ← decision needed
+ADR 0005's move to local-only inference (2026-08-07) removes the *cost* objection to the
+embedding path — a local embedding model is no longer a heavy dependency for a local-first
+app. It does not remove the *tuning* objection, which is the binding one: the embedding path
+needs labelled idiom data to tune against, and that does not exist until Pass B. The
+ordering is unchanged; the decision is simply easier when it arrives.
+
+The Stage 8 exit criterion is therefore: **dictionary-path idiom recall measured and
+recorded**, with the embedding decision following from it.
 
 ### 2. Layer 3 write threshold
 
@@ -269,7 +280,11 @@ Layer 2's arithmetic does not transfer. Exhaustive contiguous enumeration at `n 
 over a 1500-word transcript is ~7,500 spans per video against ~150 from dependency — a 50×
 change that invalidates the sizing above and needs its own answer.
 
-The candidate resolutions are in `07-extraction.md` §14. Recommended: **persist on second
-sighting**, using a rebuildable index over `tokens` to answer "seen before?", since a
-once-ever span has no computable cohesion or completeness and therefore nothing a rescan
-could not recover. Decide at Stage 8, measured.
+The candidate resolutions are in `07-extraction.md` §14. **Confirmed 2026-08-07 as the
+recorded default: persist on second sighting**, using a rebuildable index over `tokens` to
+answer "seen before?", since a once-ever span has no computable cohesion or completeness and
+therefore nothing a rescan could not recover. Still to be validated at Stage 8 by
+measurement — the default is what ships if the measurement says nothing, not a conclusion.
+
+ADR 0006's two-video corpus is what makes this measurable at all: with one video, "seen
+twice" essentially never happens, so the threshold could not be evaluated.

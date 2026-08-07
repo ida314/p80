@@ -195,7 +195,10 @@ worker's jobs be reclaimed after a timeout.
 ### `settings`
 `key`, `value_json`, `updated_at`
 
-API keys are **never** stored here (§32.3) — they are read from `.env.local` only.
+API keys are **never** stored here (§32.3). Under ADR 0005 there are none to store —
+inference is local and `.env.local` holds only the vLLM base URL and model ID, which are
+config, not secrets. The prohibition stands regardless, so that a future cloud adapter
+cannot quietly land a key in a settings row.
 
 ---
 
@@ -330,8 +333,15 @@ before-and-after comprehension to be recorded. No table exists for either.
 exposes prompt and output inspection in the UI, §31.3 tracks LLM cost per retained item,
 and §38.10 makes cost tracking a named risk mitigation. All four need this table.
 
+**`cost_usd` is always `NULL`** <!-- REVISED: ADR 0005 --> — all inference is local, so
+dollars are not the scarce resource. The column stays for schema stability; `latency_ms` is
+the live cost signal and the denominator of §31.3's cost-per-retained-item. Never write a
+synthesized dollar figure into it.
+
 **Redaction:** API keys must never appear in `request_json` (§32.3). Redaction happens on
-write, not on read.
+write, not on read. Under local-only inference there is no key to leak, so this is now a
+structural guarantee rather than a discipline — the redaction pass stays anyway, because a
+cloud adapter would reintroduce the risk silently.
 
 ### `transcript_corrections` <!-- ADDED -->
 `id`, `video_id`, `transcript_segment_id`, `before_text`, `after_text`,

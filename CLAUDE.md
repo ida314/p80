@@ -42,6 +42,12 @@ defect regardless of how well it works.
 4. Playback is exclusively through the YouTube IFrame Player API.
 5. Never claim frame-accurate playback in UI copy — the player starts near a keyframe.
 
+Rules 1–4 constrain the **YouTube adapter**, which is MVP's only media path. They are not a
+statement that P80 is a YouTube product: the domain unit is a timed media source plus a
+transcript — an `.mp4` or equivalent — and everything YouTube-specific stays behind
+`MediaSourceAdapter`, so local files and other providers remain new adapters rather than a
+refactor. See `docs/contracts/04-providers.md` §1, *Provider independence*.
+
 ### Human control (spec §7.3)
 6. **No candidate ever becomes a learning item without an explicit user action.** There is
    no auto-approval path, not even a disabled one.
@@ -59,18 +65,28 @@ defect regardless of how well it works.
 12. Display uncertainty. Never present a low-confidence result as confident.
 
 ### Local-first (spec §7.2, §32)
-13. Bind to `127.0.0.1`. Strict CORS. LAN exposure is opt-in behind a warning.
-14. API keys come from `.env.local` only — never the database, never a response body,
-    never a log line, never an error message.
-15. No remote analytics. Every external request is identifiable and disclosed.
+13. Bind to `127.0.0.1`. Strict CORS. LAN exposure is opt-in behind a warning. This covers
+    the NLP sidecar (ADR 0002) and the vLLM server (ADR 0005) as much as the API.
+14. **All inference is local (ADR 0005). P80 holds no API keys.** Do not add a cloud
+    provider, an SDK, or a key-reading code path. If a task seems to need one, the task is
+    wrong — stop and ask. `.env.local` holds local endpoint config only, which is not a
+    secret. Should this ever be revisited, the rule reverts to: keys from `.env.local`
+    only, never the database, a response body, a log line, or an error message.
+15. No remote analytics. Every external request is identifiable and disclosed — and the
+    steady-state list is **empty**. P80 makes no outbound requests at runtime; the
+    dictionary, frequency, and model artifacts are downloaded once during setup.
 16. Recordings are not persisted unless the user explicitly saves them.
 
 ### Scope (spec §6)
 17. The non-goals list in spec §6 is binding. Do not build multilingual support,
     pronunciation grading, conversation mode, web search, social features, cloud sync, or
     accounts. If a task drifts toward one, stop and flag it.
-18. One target language. All language-specific behaviour goes in a `LanguageAdapter`
-    (`docs/contracts/04-providers.md` §2). No `if (language === ...)` outside an adapter.
+18. **MVP ships one target language: German → English** (ADR 0001). All language-specific
+    behaviour goes in a `LanguageAdapter`, resolved from a registry keyed by
+    `profile.target_language` (`docs/contracts/04-providers.md` §2). No
+    `if (language === ...)` outside an adapter. The registry is the *only* concession to
+    the eventual Portuguese/Spanish/French ambition — a profile switcher, a second adapter,
+    or a second evaluation corpus is rule 17 territory.
 
 ---
 
@@ -108,8 +124,8 @@ defect regardless of how well it works.
 
 ## 4. Stack
 
-Decided in `docs/decisions/`. Until an ADR is accepted, the choice is open — check there
-before assuming.
+All eleven ADRs in `docs/decisions/` are accepted. The stack below is settled, not
+provisional — check there for *why* before changing any of it.
 
 Two clients over one API, split by whether the surface needs media (ADR 0007):
 
@@ -120,6 +136,9 @@ apps/web      media surfaces — review sessions, video loop, video detail.
               React + TypeScript + Vite, YouTube IFrame API, MediaRecorder.
 apps/api      Node + TypeScript + Fastify + Zod
 apps/worker   Node + TypeScript, SQLite-backed job polling
+services/nlp  Python + FastAPI + spaCy de_core_news_lg (ADR 0002).
+              Stateless, loopback only, one narrow HTTP interface
+              matching LanguageAdapter.annotate.
 packages/core             domain logic, scoring, pipeline stages
 packages/database         schema + migrations
 packages/language-adapters
@@ -131,7 +150,22 @@ Both clients talk to the same `/api/*` surface and nothing else. There is no UI-
 layer — two concrete clients, not a client framework.
 
 SQLite with explicit migrations. `ts-fsrs` for scheduling. No Redis. One root command
-starts the API, worker, and both clients.
+starts the API, worker, both clients, and the NLP sidecar.
+
+**Two external processes, managed outside `pnpm dev`** because both are long-lived and
+expensive to start:
+
+- **vLLM** serving the local model on loopback, OpenAI-compatible (ADR 0005). Expect it to
+  be *down* during Stages 1–6 — that is the §5.2 degraded path getting free exercise.
+- **`uselimit`** (`~/Projects/uselimit`, workspace link until published) enforces the
+  enrichment ceilings. Needs a transactional SQLite `StorageAdapter`, to be written
+  upstream; the shipped `InMemoryAdapter` is single-process and will not do, since the API
+  and worker both consume budget.
+
+**Setup is not `pnpm install`.** It also downloads the spaCy model, two Wiktextract dumps,
+and the OpenSubtitles corpus, then builds the dictionary index and the frequency counts.
+Document every step — this is a real cost paid by every future contributor, agent sessions
+included.
 
 ---
 

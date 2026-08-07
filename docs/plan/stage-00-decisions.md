@@ -16,20 +16,30 @@ grading, and unrestricted YouTube ingestion before the central learning loop is 
 
 Spec §35 Stage 0 lists twelve steps. Their current state:
 
-- [ ] 1. Select the first target language → **ADR 0001**
-- [ ] 2. Select the native language → **ADR 0001**
-- [ ] 3. Select one frequency-data source → **ADR 0004**
-- [ ] 4. Select one dictionary provider → **ADR 0003**
-- [ ] 5. Select one optional LLM provider → **ADR 0005**
+- [x] 1. Select the first target language → **ADR 0001** — German
+- [x] 2. Select the native language → **ADR 0001** — English
+- [x] 3. Select one frequency-data source → **ADR 0004** — self-built OpenSubtitles-DE
+      unigram + n-gram counts; SUBTLEX-DE committed as a correlation fixture, not a source
+- [x] 4. Select one dictionary provider → **ADR 0003** — local Wiktextract index over
+      **both** the English and German Wiktionary editions
+- [x] 5. Select one optional LLM provider → **ADR 0005** — local vLLM only. No cloud
+      adapter, no API keys
 - [x] 6. Confirm the MVP requires user-supplied or authorized transcripts
       → recorded in `CLAUDE.md` §2 and `docs/contracts/04-providers.md` §1
-- [ ] 7. Write source-use and privacy notices → `docs/policy/` (after ADR 0005)
+- [ ] 7. Write source-use and privacy notices → `docs/policy/`. **Substantially smaller
+      than drafted:** ADR 0005 removed the only outbound data flow, so the privacy notice
+      documents a system that makes no external requests at all. Source-use still needs
+      writing — YouTube ToS posture, CC BY-SA attribution for both Wiktionary editions,
+      OpenSubtitles corpus terms
 - [x] 8. Define the exact supported transcript formats
       → VTT, SRT, pasted timestamped text, internal JSON
       (`docs/contracts/04-providers.md` §1)
-- [ ] 9. Define the initial function-word list → blocked on ADR 0001; policy already
-      fixed in `docs/contracts/01-domain-model.md` §6
-- [ ] 10. Create a hand-labelled evaluation transcript → **ADR 0006**
+- [ ] 9. Define the initial German function-word list → unblocked by ADR 0001; policy
+      already fixed in `docs/contracts/01-domain-model.md` §6. Lives in the German
+      `LanguageAdapter`, never in pipeline code
+- [ ] 10. Create a hand-labelled evaluation transcript → **ADR 0006**. Scope is now
+      **Pass A only** — video 1, exhaustive word labels. Pass B (spans, both axes, video 2)
+      is a Stage 8 exit criterion, not Stage 0 work
 - [x] 11. Define the north-star metric → `delayed_transfer_correct_per_hour`
       (`docs/contracts/06-scoring.md` §7)
 - [x] 12. Freeze post-MVP features → spec §6 non-goals, restated as binding in
@@ -50,14 +60,18 @@ Additional work completed in this stage beyond the spec's list:
 
 | # | Criterion (spec §35) | Verified by | State |
 |---|---|---|---|
-| 1 | One language pair selected | ADR 0001 accepted | ☐ |
-| 2 | Data providers selected | ADRs 0003, 0004, 0005 accepted | ☐ |
+| 1 | One language pair selected | ADR 0001 accepted — German → English | ☑ |
+| 2 | Data providers selected | ADRs 0003, 0004, 0005 accepted | ☑ |
 | 3 | YouTube download behaviour excluded | `CLAUDE.md` §2 rules 1–5 | ☑ |
-| 4 | Hand-labelled evaluation set exists | file committed under `fixtures/`, ADR 0006 | ☐ |
+| 4 | Hand-labelled evaluation set exists | Pass A committed under `fixtures/eval/de/`, ADR 0006 | ☐ |
 | 5 | MVP goals and non-goals approved | spec §5–§6 restated in `CLAUDE.md` §2 rule 17 | ☑ |
+| 6 | NLP stack decided | ADR 0002 accepted — Python sidecar, spaCy | ☑ |
 
-Additional criterion added here: **ADR 0002 (NLP stack) accepted.** The spec omits it, but
-Stage 1 cannot lay out the repo without it.
+Criterion 6 is added here rather than taken from the spec, which omits it. Stage 1 cannot
+lay out the repo without it.
+
+**Only criterion 4 is outstanding.** All eleven ADRs are accepted; what remains in Stage 0
+is labelling work, plus steps 7 and 9, neither of which blocks Stage 1.
 
 ## Decision order
 
