@@ -9,12 +9,14 @@
  *
  *   pnpm dev:noop        (from the repo root)
  */
-import { createLogger, loadConfig } from '@p80/core';
+import { createCliLogger, loadConfig } from '@p80/core';
 import { openDatabase } from '../client.js';
 import { enqueueJob } from '../repositories/jobs.js';
 
 const config = loadConfig();
-const logger = createLogger('enqueue', config.P80_LOG_LEVEL);
+// Logs to stderr: stdout is this script's data channel, and callers parse it. See the
+// note on `createCliLogger` — sharing fd 1 made `scripts/smoke.sh` flaky.
+const logger = createCliLogger('enqueue', config.P80_LOG_LEVEL);
 const handle = openDatabase(config.P80_DB_PATH);
 
 try {

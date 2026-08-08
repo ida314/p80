@@ -5,15 +5,18 @@
 
 **Current stage:** Stage 2 — Manual video and transcript ingestion (not started)
 **Milestone:** M1 — First vertical slice
-**Last updated:** 2026-08-07
+**Last updated:** 2026-08-08
 
 ---
 
 ## Now
 
 **Stage 1 is done.** All five spec exit criteria pass as tests, plus eight
-contract-derived ones the spec left unchecked. 50 TypeScript tests, 3 Python tests, nine
+contract-derived ones the spec left unchecked. 52 TypeScript tests, 3 Python tests, nine
 packages typechecking clean, and `scripts/smoke.sh` green 10/10 against a live `pnpm dev`.
+
+Re-verified end to end on 2026-08-08, which turned up **a third silent Stage 1 bug** — see
+Notes. Fixed, with a regression test that fails against the old code.
 
 The repo now exists:
 
@@ -96,6 +99,15 @@ two-video corpus** and has to wait for a real library.
 
 ## Notes
 
+- **A third silent bug, found 2026-08-08 by re-running the Stage 1 checks.** `dev:noop`
+  logged through `createLogger`, which writes to **stdout** and buffers until process exit,
+  so the pino line raced the `process.stdout.write` of the job id. About two runs in five,
+  `scripts/smoke.sh`'s `tail -1` captured the JSON log line, looked up a job id of
+  `{"level":30,...`, and got a 404 — reported as *"job reached succeeded: got none"*, which
+  points at the worker, not at the parsing. Fix: `createCliLogger` sends logs to fd 2, so
+  stdout stays a pure data channel. `packages/database/test/enqueue-noop-cli.test.ts` pins
+  the contract and runs the CLI ten times, because one green run proved nothing here.
+  Same family as the two below: everything reported healthy while being wrong.
 - **Two silent bugs found while building Stage 1**, both now with regression tests and both
   recorded in ADR 0012. The first is the instructive one: a relative `P80_DB_PATH` gave
   the API and worker **separate databases**, because `pnpm --filter` runs each in its own
