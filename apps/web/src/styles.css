@@ -505,3 +505,297 @@ h2 {
   align-items: center;
   gap: 0.4rem;
 }
+
+/* ------------------------------------------------------- Stage 3: items */
+
+/* The offer that appears once a transcript selection resolves. Sticky at the bottom so a
+   long transcript does not push it off-screen — the selection is at the cursor and the
+   action has to be reachable from there. */
+.selection-offer {
+  position: sticky;
+  bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
+}
+
+.selection-offer mark,
+.item-form mark,
+.review__sentence mark {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--fg);
+  border-radius: 3px;
+  padding: 0 0.15em;
+}
+
+.item-form__source {
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  line-height: 1.6;
+}
+
+.item-form__context {
+  color: var(--muted);
+}
+
+.item-form label {
+  display: block;
+  margin: 0.85rem 0;
+}
+
+.item-form input,
+.item-form select,
+.item-form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.item-form__cards {
+  border: 1px solid color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+}
+
+.item-form__card-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.4rem 0;
+}
+
+.item-form__card-toggle select {
+  width: auto;
+}
+
+.item-form__actions,
+.item-created .editor__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.item-created__cards {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0;
+}
+
+.item-created__cards li {
+  padding: 0.45rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+.item-created__cards span {
+  display: block;
+}
+
+/* Hard rules 11 and 12. Warning-coloured rather than error-coloured: an unverified gloss
+   is a statement about what P80 knows, not a fault. */
+.badge--unverified {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+/* ------------------------------------------------------ Stage 3: review */
+
+.review__head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.review__prompt {
+  font-size: 1.1rem;
+  margin: 1rem 0;
+}
+
+.review__cloze {
+  font-size: 1.35rem;
+  line-height: 1.7;
+  padding: 0.9rem 1rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+
+.review__answer {
+  display: block;
+  margin: 1rem 0;
+}
+
+.review__answer textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.review__back h2 {
+  margin-bottom: 0.25rem;
+}
+
+.review__sentence {
+  line-height: 1.7;
+  margin: 0.85rem 0;
+}
+
+.review__ratings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+.review__ratings button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  text-align: left;
+  padding: 0.6rem 0.7rem;
+}
+
+.review__ratings .hint {
+  font-size: 0.72rem;
+}
+
+.review__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.check--ok {
+  color: var(--accent);
+}
+
+/* The clip player. No controls by design — a scrubber is a way out of the clip and into
+   the answer — so the element itself is only visible when the user asks for the picture. */
+.clip video {
+  width: 100%;
+  max-height: 20rem;
+  border-radius: 8px;
+  background: #000;
+}
+
+.clip--audio-only video {
+  /* Not `display: none`: a hidden element does not decode in every browser, and the audio
+     is the whole card. Collapsed to nothing visible while staying live. */
+  height: 0;
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin-top: 1.5rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.shortcuts > div {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.shortcuts dt,
+.shortcuts dd {
+  margin: 0;
+}
+
+kbd {
+  padding: 0.05rem 0.3rem;
+  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.72rem;
+}
+
+/* ------------------------------------------------------- Stage 3: today */
+
+.today__counts {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+
+.today__count {
+  display: flex;
+  flex-direction: column;
+}
+
+.today__count strong {
+  font-size: 2rem;
+  line-height: 1.1;
+}
+
+.today__count span {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.today__start {
+  display: inline-block;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.today__forecast {
+  margin-top: 1.75rem;
+}
+
+.forecast {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+}
+
+.forecast li {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.15rem 0;
+  font-size: 0.8rem;
+}
+
+.forecast__date {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.forecast__bar {
+  height: 0.55rem;
+  min-width: 2px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.forecast__count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

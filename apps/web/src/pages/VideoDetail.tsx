@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { formatTimecode } from '@p80/core/browser';
 import { correctSegment, getTranscript, getVideo, updateVideo } from '../api.js';
@@ -12,6 +12,13 @@ import {
 import { usePlaybackClock } from '../player/usePlaybackClock.js';
 import { TranscriptList } from '../transcript/TranscriptList.js';
 import { ParseWarnings } from '../transcript/ParseWarnings.js';
+import {
+  readTranscriptSelection,
+  type TranscriptSelection,
+} from '../transcript/selection.js';
+import { CreateItemForm } from '../items/CreateItemForm.js';
+import { ItemCreated } from '../items/ItemCreated.js';
+import type { ItemPayload } from '../api.js';
 
 /** How often to re-check a transcript that is still being parsed. Slower than the job
  *  poll because this screen is not where the upload happened — someone who navigated here
@@ -26,6 +33,12 @@ const PARSING_RECHECK_MS = 1500;
  * which line is active, where a click should seek, how a correction merges. What is left
  * here is genuinely browser-only state: the player handle, its state, and its failures.
  *
+ * Stage 3 adds the manual item path: highlight transcript text, and the page offers to
+ * turn it into a learning item. The selection is read out of the DOM here because a
+ * `Selection` is not something the server has — but what is sent is segment ids and
+ * character offsets, never a timing, so the clip window stays the API's to compute
+ * (ADR 0007, ADR 0020).
+ *
  * Candidate highlights, timeline markers, difficulty, and coverage are the rest of §10.4
  * and arrive with Stages 5–12.
  */
@@ -39,7 +52,18 @@ export function VideoDetail() {
   const [playerState, setPlayerState] = useState<number>(PLAYER_STATE.unstarted);
   const [failure, setFailure] = useState<PlayerFailure | null>(null);
 
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  const [selection, setSelection] = useState<TranscriptSelection | null>(null);
+  const [pendingSelection, setPendingSelection] = useState<TranscriptSelection | null>(null);
+  const [created, setCreated] = useState<ItemPayload | null>(null);
+
   const positionMs = usePlaybackClock(controls, playerState);
+
+  const readSelection = useCallback(() => {
+    const container = transcriptRef.current;
+    if (container === null) return;
+    setSelection(readTranscriptSelection(container));
+  }, []);
 
   const transcriptStatus = video.data?.transcriptStatus;
   const durationMs = video.data?.durationMs ?? null;
@@ -165,13 +189,56 @@ export function VideoDetail() {
 
         {video.data.transcriptStatus === 'ready' && (
           <>
-            <TranscriptList
-              segments={segments}
-              wordTiming={wordTiming}
-              positionMs={positionMs}
-              onSeek={controls === null ? null : (ms) => controls.seekTo(ms)}
-              onCorrect={onCorrect}
-            />
+            {created !== null && (
+              <ItemCreated item={created} onDone={() => setCreated(null)} />
+            )}
+
+            {pendingSelection !== null && (
+              <CreateItemForm
+                videoId={id}
+                selection={pendingSelection}
+                onCreated={(item) => {
+                  setPendingSelection(null);
+                  setSelection(null);
+                  setCreated(item);
+                }}
+                onCancel={() => setPendingSelection(null)}
+              />
+            )}
+
+            {/*
+              `onMouseUp` and `onKeyUp` rather than a `selectionchange` listener: the former
+              fire when the user has finished choosing, and the latter fires on every
+              intermediate range, which would rebuild the offer on each keystroke of a
+              shift-arrow selection. Keyboard selection still works — §11 makes keyboard-only
+              operation a requirement, not an enhancement.
+            */}
+            <div
+              ref={transcriptRef}
+              onMouseUp={readSelection}
+              onKeyUp={readSelection}
+              onBlur={() => setSelection(null)}
+            >
+              <TranscriptList
+                segments={segments}
+                wordTiming={wordTiming}
+                positionMs={positionMs}
+                onSeek={controls === null ? null : (ms) => controls.seekTo(ms)}
+                onCorrect={onCorrect}
+              />
+            </div>
+
+            {selection !== null && pendingSelection === null && (
+              <div className="selection-offer" role="status">
+                <span>
+                  Selected: <mark>{selection.text}</mark>
+                </span>
+                <button type="button" onClick={() => setPendingSelection(selection)}>
+                  Create a learning item
+                </button>
+              </div>
+            )}
+
             <ParseWarnings warnings={transcript.data?.file?.warnings ?? []} />
           </>
         )}

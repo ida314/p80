@@ -112,6 +112,50 @@ function toGroup(words: readonly TimedWord[], from: number, to: number): WordGro
   };
 }
 
+/**
+ * Map a character selection inside a segment's rendered text onto word offsets.
+ *
+ * The browser gives a selection in characters, and `resolveSpanTiming` wants half-open
+ * word offsets. The mapping is exact rather than approximate because a word-tier segment's
+ * text is *defined* as its words joined by one space (`toGroup`, above) — so walking the
+ * array with a cursor reproduces the rendered string character for character.
+ *
+ * Returns null when the segment's text was not built that way, which is every corrected
+ * segment and every `cue`-tier one. The caller then has cue timing and nothing finer, which
+ * is the honest answer rather than a guess (ADR 0017 §1).
+ *
+ * A selection that starts or ends mid-word widens to the whole word. Half a word has no
+ * clip: forced alignment places words, and a learner asked to hear *laufen* is not served
+ * by the audio for *lauf*.
+ */
+export function charSpanToWordOffsets(
+  segmentWords: readonly TimedWord[],
+  charStart: number,
+  charEnd: number,
+): { startOffset: number; endOffset: number } | null {
+  if (segmentWords.length === 0) return null;
+  if (charEnd <= charStart) return null;
+
+  let cursor = 0;
+  let startOffset: number | null = null;
+  let endOffset: number | null = null;
+
+  for (let i = 0; i < segmentWords.length; i += 1) {
+    const word = segmentWords[i]!;
+    const wordStart = cursor;
+    const wordEnd = cursor + word.text.length;
+    // Overlap, not containment: a selection clipping one character of a word takes it.
+    if (charStart < wordEnd && charEnd > wordStart) {
+      if (startOffset === null) startOffset = i;
+      endOffset = i + 1;
+    }
+    cursor = wordEnd + 1; // the joining space
+  }
+
+  if (startOffset === null || endOffset === null) return null;
+  return { startOffset, endOffset };
+}
+
 export interface SpanTiming {
   startMs: number;
   endMs: number;

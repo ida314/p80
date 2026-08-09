@@ -487,32 +487,60 @@ export function setMediaLocation(
   return video;
 }
 
-export interface DeleteVideoCounts {
+export interface TranscriptRowCounts {
   deletedSegments: number;
   deletedCorrections: number;
   deletedFiles: number;
+}
+
+export interface DeleteVideoCounts extends TranscriptRowCounts {
+  /** Items whose last occurrence went with the video. Reported because the user is
+   *  entitled to know that deleting a video retired part of their curriculum. */
+  archivedItems: number;
 }
 
 /**
  * Counts are taken inside the transaction rather than read from the cascade, so the number
  * reported to the user is the number actually removed.
  *
- * Approved `learning_items` survive (`01-domain-model.md` §7 invariant 5): an item whose
- * last occurrence goes becomes `archived`, not deleted, so review history stays
- * interpretable. That is enforced by the schema — this function does not touch them.
+ * **Approved `learning_items` survive** (`01-domain-model.md` §7 invariant 5), and an item
+ * whose last occurrence goes becomes `archived` rather than being deleted, so review
+ * history stays interpretable.
+ *
+ * The archival is done here, explicitly. It used to say the schema enforced it, and the
+ * schema does not: the foreign keys cascade `item_occurrences` away and leave the item row
+ * `active` with nothing to play — which is the state invariant 2 forbids, reachable through
+ * the ordinary Delete button. Nothing could have caught it before Stage 3, because there
+ * were no items; the first end-to-end run that created one and then deleted its video
+ * found it immediately.
+ *
+ * `status = 'archived'` is enough to take the item out of scheduling — every session query
+ * filters on `active` — so the cards are left alone and keep their history.
  */
 export function deleteVideo(handle: DatabaseHandle, id: string): DeleteVideoCounts {
   return handle.sqlite.transaction(() => {
     const counts = countTranscriptRows(handle, id);
     handle.sqlite.prepare('DELETE FROM videos WHERE id = ?').run(id);
-    return counts;
+
+    // After the cascade, not before: which items lost their last occurrence is only
+    // knowable once the occurrences are gone.
+    const archived = handle.sqlite
+      .prepare(
+        `UPDATE learning_items
+            SET status = 'archived', updated_at = ?
+          WHERE status <> 'archived'
+            AND NOT EXISTS (SELECT 1 FROM item_occurrences o WHERE o.item_id = id)`,
+      )
+      .run(now());
+
+    return { ...counts, archivedItems: archived.changes };
   })();
 }
 
 export function countTranscriptRows(
   handle: DatabaseHandle,
   videoId: string,
-): DeleteVideoCounts {
+): TranscriptRowCounts {
   const one = (sql: string) =>
     (handle.sqlite.prepare(sql).get(videoId) as { n: number } | undefined)?.n ?? 0;
   return {

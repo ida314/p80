@@ -96,6 +96,9 @@ importers:
       pino:
         specifier: ^9.5.0
         version: 9.14.0
+      ts-fsrs:
+        specifier: ^5.4.1
+        version: 5.4.1
       ulid:
         specifier: ^2.3.0
         version: 2.4.0
@@ -1521,6 +1524,10 @@ packages:
     resolution: {integrity: sha512-m1TdR/rvT7kgGJZhspNtXdsdYk0fddFpJJFlG5s+UkPFo6lkLoZ3YLOaovPYjq1R75NP5JfeTlSHaOsE09peCg==}
     engines: {node: '>=20'}
 
+  ts-fsrs@5.4.1:
+    resolution: {integrity: sha512-mOp9+oexJexBTkwjg/jQI1aSUQRLIAvbimeKHLSmVdNJPwObugFNKmZkoggH5d6kZ0uaWLboP1Al1DnXAfIb9w==}
+    engines: {node: '>=20.0.0'}
+
   tsx@4.23.9:
     resolution: {integrity: sha512-6q8uTORRGauQVjqMQnKUucLFoeXZAfw6zKvG35GLbdKWbLdeOtZ3H4mhyA5mxuUd2o2cRTskhj59nLLQseUvUw==}
     engines: {node: '>=18.0.0'}
@@ -2800,6 +2807,8 @@ snapshots:
   tinyspy@3.0.2: {}
 
   toad-cache@3.7.4: {}
+
+  ts-fsrs@5.4.1: {}
 
   tsx@4.23.9:
     dependencies:

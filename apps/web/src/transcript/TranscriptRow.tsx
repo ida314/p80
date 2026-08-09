@@ -70,9 +70,18 @@ export function TranscriptRow({
         </button>
       </div>
 
-      {/* Interpolated as a child, so React escapes it. Transcript text is untrusted input
-          (`CLAUDE.md` rule 8) and this is the surface where it is rendered most. */}
-      <p className="segment__text">{segment.text}</p>
+      {/*
+        Interpolated as a child, so React escapes it. Transcript text is untrusted input
+        (`CLAUDE.md` rule 8) and this is the surface where it is rendered most.
+
+        `data-segment-id` is what `readTranscriptSelection` walks to turn a highlight into
+        segment ids and character offsets. It goes on the element whose `textContent` is
+        exactly the segment's effective text and nothing else — a timecode or a badge
+        inside it would shift every offset the server then resolves against the word array.
+      */}
+      <p className="segment__text" data-segment-id={segment.id}>
+        {segment.text}
+      </p>
 
       {segment.corrected && (
         <p className="segment__original hint">

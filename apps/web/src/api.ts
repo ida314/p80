@@ -13,9 +13,17 @@
  */
 
 import type {
+  CreateItemBody,
+  DueSummaryPayload,
   InterestPayload,
+  ItemHistoryPayload,
+  ItemPayload,
   JobRecord,
   MediaRootPreflightPayload,
+  ReviewCardPayload,
+  ReviewForecastPayload,
+  ReviewRevealPayload,
+  SessionPayload,
   SettingsPayload,
   SegmentPayload,
   TranscriptFormat,
@@ -27,10 +35,18 @@ import type {
 } from '@p80/core/browser';
 
 export type {
+  CreateItemBody,
+  DueSummaryPayload,
   InterestPayload,
+  ItemHistoryPayload,
+  ItemPayload,
   JobRecord,
   MediaRootPreflightPayload,
   ParseWarningPayload,
+  ReviewCardPayload,
+  ReviewForecastPayload,
+  ReviewRevealPayload,
+  SessionPayload,
   SettingViewPayload,
   SettingsPayload,
   SegmentPayload,
@@ -184,7 +200,10 @@ export interface DeletionCounts {
 }
 
 export const deleteVideo = (id: string) =>
-  send<DeletionCounts & { deleted: true }>('DELETE', `/api/videos/${id}`);
+  send<DeletionCounts & { deleted: true; archivedItems: number }>(
+    'DELETE',
+    `/api/videos/${id}`,
+  );
 
 /* ------------------------------------------------------------ transcript */
 
@@ -255,3 +274,77 @@ export const updateSettings = (
   settings: Record<string, string | number | boolean>,
   acknowledgeOrphans = false,
 ) => send<SettingsPayload>('PUT', '/api/settings', { settings, acknowledgeOrphans });
+
+/* --------------------------------------------------------- items (Stage 3) */
+/**
+ * ADR 0020. `createItem` sends a **selection** — segment ids and character offsets — and
+ * never a timing. The server resolves the offsets against the word array and derives the
+ * clip window, because deciding what a clip is would be domain logic (ADR 0007) and a
+ * client-supplied `startMs` would be unverifiable.
+ */
+export const createItem = (body: CreateItemBody) => send<ItemPayload>('POST', '/api/items', body);
+
+export const getItem = (id: string) => api<ItemPayload>(`/api/items/${id}`);
+
+export const listItems = (params: { videoId?: string; limit?: number } = {}) => {
+  const query = new URLSearchParams();
+  if (params.videoId) query.set('videoId', params.videoId);
+  if (params.limit) query.set('limit', String(params.limit));
+  const suffix = query.toString();
+  return api<{ items: ItemPayload[]; nextCursor: string | null }>(
+    `/api/items${suffix ? `?${suffix}` : ''}`,
+  );
+};
+
+export const getItemHistory = (id: string) =>
+  api<ItemHistoryPayload>(`/api/items/${id}/history`);
+
+/* -------------------------------------------------------- review (Stage 3) */
+
+export const getDueSummary = () => api<DueSummaryPayload>('/api/review/due');
+
+export const getForecast = () => api<ReviewForecastPayload>('/api/review/forecast');
+
+export const startSession = (body: {
+  desiredMinutes: number;
+  includeNewItems: boolean;
+}) => send<SessionPayload>('POST', '/api/review/session', body);
+
+/** `{ done: true }` when the plan is exhausted. The union is the API's, not a client
+ *  invention — a session with nothing left is a normal outcome, not a 404. */
+export const getNextCard = (sessionId: string, preRollMs?: number) => {
+  const query = preRollMs === undefined ? '' : `?preRollMs=${preRollMs}`;
+  return api<ReviewCardPayload | { done: true }>(
+    `/api/review/session/${sessionId}/next${query}`,
+  );
+};
+
+/** The attempt, which is what earns the back face (§1 rule 2). */
+export const answerCard = (
+  sessionId: string,
+  body: { reviewId: string; responseText?: string; responseLatencyMs?: number; sourceContextUsed?: boolean },
+) => send<ReviewRevealPayload>('POST', `/api/review/session/${sessionId}/answer`, body);
+
+export const rateCard = (
+  sessionId: string,
+  body: { reviewId: string; rating: 'again' | 'hard' | 'good' | 'easy' },
+) =>
+  send<{
+    cardId: string;
+    rating: string;
+    dueAt: number;
+    intervalDays: number;
+    phase: string;
+    lapsed: boolean;
+    requeued: boolean;
+  }>('POST', `/api/review/session/${sessionId}/rate`, body);
+
+export const hintCard = (sessionId: string, reviewId: string) =>
+  send<{ reviewId: string; hintCount: number }>(
+    'POST',
+    `/api/review/session/${sessionId}/hint`,
+    { reviewId },
+  );
+
+export const completeSession = (sessionId: string) =>
+  send<SessionPayload>('POST', `/api/review/session/${sessionId}/complete`, {});

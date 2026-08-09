@@ -86,6 +86,23 @@ export const ERROR_CODES = {
   /** A proposed media root that cannot be one. `details.reason` carries a
    *  `MediaRootRejection`, which distinguishes a typo from a refusal on principle. */
   INVALID_MEDIA_ROOT: 'INVALID_MEDIA_ROOT',
+  // --- Stage 3: manual items and review (ADR 0020) ---
+  /** The item identity constraint from `01-domain-model.md` §3.1. `details` names the
+   *  existing item so the client can offer to open it. Never auto-suffixed into a second
+   *  sense: two senses described identically are more likely one item entered twice, and
+   *  a silently collapsed distinction is invariant 4's failure mode. */
+  ITEM_SENSE_EXISTS: 'ITEM_SENSE_EXISTS',
+  /** A transcript selection that does not resolve — segments from another video, an empty
+   *  span, or offsets past the end of the joined text. */
+  INVALID_SELECTION: 'INVALID_SELECTION',
+  /** `GET /next` or an answer against a session that has been completed. */
+  SESSION_COMPLETE: 'SESSION_COMPLETE',
+  /** A rating for a review that already has one. `reviews` is append-only, so the second
+   *  rating cannot overwrite the first and must be refused rather than absorbed. */
+  REVIEW_ALREADY_RATED: 'REVIEW_ALREADY_RATED',
+  /** Revealing or rating before an attempt was recorded. §1 rule 2 makes the rep happen
+   *  before the reveal; skipping the attempt would log a restudy as a rep (§9.9). */
+  REVIEW_NOT_ATTEMPTED: 'REVIEW_NOT_ATTEMPTED',
   /** The new root is valid, and videos already added would stop resolving under it.
    *  Nothing is destroyed and changing the root back restores them, so this is a
    *  confirmation gate rather than a failure — `acknowledgeOrphans: true` proceeds.

@@ -271,6 +271,17 @@ interface ItemOccurrence {
 **Invariant:** each item has exactly one `isPrimaryOccurrence = true` row. Deleting the
 primary occurrence promotes the next-highest-confidence occurrence.
 
+**Where `sentenceId` points before sentence reconstruction exists** <!-- ADDED: ADR 0020 -->.
+A manually created occurrence anchors to a `sentences` row derived from the transcript
+segments the user selected — one row per segment, keyed by the segment's own
+`sequence_index`, so repeat selections in one segment reuse it. Segment-as-sentence is the
+null hypothesis sentence reconstruction improves on, not a placeholder of a different kind.
+
+The consequence reaches forward: `sentence_id` is `ON DELETE CASCADE`, so **reconstruction
+must reconcile with existing rows and relink occurrences.** `DELETE FROM sentences WHERE
+video_id = ?` destroys every hand-made item's anchor and leaves `learning_items` rows in
+the state invariant 2 forbids, with nothing to detect it.
+
 ## 6. Function-word policy (§15)
 
 P80 must **never** globally hide words like *and*, *for*, *to*, or their equivalents.

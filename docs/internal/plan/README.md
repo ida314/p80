@@ -24,7 +24,7 @@ Use `_template.md`. Keep briefs to roughly one page.
 | 0 | Lock scope and constraints | [stage-00](stage-00-decisions.md) | in progress |
 | 1 | Local application skeleton | [stage-01](stage-01-skeleton.md) | **done** |
 | 2 | Manual video and transcript ingestion | [stage-02](stage-02-ingestion.md) | in progress |
-| 3 | Manual learning-item prototype | — | not started |
+| 3 | Manual learning-item prototype | [stage-03](stage-03-manual-items.md) | code-complete; manual checks outstanding |
 | 4 | Core transcript processing | — | not started |
 | 5 | Word-candidate extraction | — | not started |
 | 6 | Dictionary grounding | — | not started |
@@ -45,4 +45,7 @@ A stage is complete when **every exit criterion in spec §35 for that stage pass
 or an explicitly recorded manual check**. Not when the code exists. Not when it looks right.
 
 Before starting Stage 4, read ADR 0013 — its sentence reconstruction is partly a port, with
-four mandatory adaptations.
+four mandatory adaptations — **and ADR 0020 §2**, which constrains it: sentence
+reconstruction must reconcile with existing rows and relink occurrences. A
+`DELETE FROM sentences WHERE video_id = ?` cascades into `item_occurrences` and destroys
+every hand-made item's anchor.

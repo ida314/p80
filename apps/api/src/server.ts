@@ -16,8 +16,10 @@ import {
 } from 'fastify-type-provider-zod';
 import { createFastify, type App } from './app.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerItemRoutes } from './routes/items.js';
 import { registerJobRoutes } from './routes/jobs.js';
 import { registerProfileRoutes } from './routes/profile.js';
+import { registerReviewRoutes } from './routes/review.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerTranscriptRoutes } from './routes/transcript.js';
@@ -114,6 +116,10 @@ export async function buildServer(config: Config): Promise<ApiServer> {
   await registerVideoRoutes(app, { handle, config });
   await registerMediaRoutes(app, { handle, config });
   await registerTranscriptRoutes(app, { handle, config });
+  // Stage 3. Neither needs `config`: the media root is reached through the media route,
+  // and a review payload carries an API URL rather than a path (ADR 0015).
+  await registerItemRoutes(app, { handle });
+  await registerReviewRoutes(app, { handle });
 
   if (isLanExposed(config)) {
     // §32.5: LAN exposure is opt-in and warns first. It is not silently normal.

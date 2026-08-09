@@ -7,8 +7,8 @@
 > **Rationale does not belong here.** If you find yourself explaining *why* rather than
 > *where*, write an ADR.
 
-**Current stage:** Stage 2 — Local media ingestion and transcription (in progress)
-**Also landed:** Stage 2b — Runtime-editable settings (code-complete, one manual check)
+**Current stage:** Stage 3 — Manual learning-item prototype (code-complete, four manual checks)
+**Also open:** Stage 2 and 2b, code-complete, six manual browser checks outstanding
 **Milestone:** M1 — First vertical slice
 **Last updated:** 2026-08-09
 
@@ -16,18 +16,35 @@
 
 ## Now
 
-**Stage 2 was rewritten around a new media source and is code-complete again, awaiting five
-manual browser checks.** ADRs 0015–0018 replaced embedded YouTube with local media files.
-Brief at `plan/stage-02-ingestion.md`, which now carries the before/after table.
+**Stage 3 is code-complete. The vertical slice closes M1's code half.** Highlight
+transcript text, describe it, get three FSRS-scheduled cards, review them against the
+source clip, and inspect the history. Brief at `plan/stage-03-manual-items.md`; ADR 0020
+carries the three decisions the contracts did not answer.
 
-**452 TypeScript tests, 24 Python tests, nine packages typechecking clean,
-`scripts/smoke.sh` 51/51 against a live `pnpm dev`, and `pnpm --filter @p80/web build`
-clean.** Migration 0002 landed — three columns on `videos`, six on `transcript_files`, two
-on `transcript_segments`, and `transcript_words`.
+**547 TypeScript tests, 24 Python tests, nine packages typechecking clean,
+`scripts/smoke.sh` 75/75 against a live `pnpm dev` (twice, idempotently), and
+`pnpm --filter @p80/web build` clean.** No migration: every table Stage 3 touches has been
+in migration 0001 since the contracts were extracted.
 
-**The whole ingestion path works over `curl`**: point at a file, watch a separate worker
-process hash and transcribe it, stream the media back by byte range, read the segments in
-time order, correct one, move the file and repair the link, delete it.
+**The whole learning loop works over `curl`** — `POST /api/items` from a segment id and
+character offsets, start a session, fetch a card, answer, rate, watch the due date move,
+read the history back. That is ADR 0007's standing test passing on the surface it was
+written for.
+
+| What | State |
+|---|---|
+| ADR 0020 written and accepted; contracts 01 and 03 amended | **done** |
+| `ts-fsrs` wrapper, snapshot round trip, `SkillState` projection | **done** |
+| Card generation rules, cloze rendering, clip windows | **done** |
+| Session builder: tiers, sibling burying, budget, new-item allowance, §8 burden | **done** |
+| `POST /api/items` + the eight §5 routes; the eight §6 review routes | **done** |
+| Web: transcript selection, creation form, card preview, review session, Today dashboard | **done** |
+| TUI: `p80 items`, `p80 due` | **done** |
+| `smoke.sh` extended to 75 checks | **done** |
+| Manual checks M1–M4 | **not run** |
+
+**Stage 2's five manual checks and Stage 2b's one are still outstanding**, and Stage 3 adds
+four of its own. All ten need the same thing: a browser and one German video file.
 
 | What | State |
 |---|---|
@@ -63,6 +80,11 @@ recorded as limitations:
   constraint that raised it. The Stage 4 pause sweep is now per-tier.
 - **The external-request list is empty**, not short. `CLAUDE.md` rule 15 went back to the
   unqualified form Stage 2 had to weaken it out of.
+
+### Stage 2 — local media ingestion (ADRs 0015–0018)
+
+Rewritten around a new media source part way through and code-complete again. Brief at
+`plan/stage-02-ingestion.md`, which carries the before/after table.
 
 ### Stage 2b — runtime settings (ADR 0019)
 
@@ -132,12 +154,12 @@ Nothing blocks the remaining Stage 2 phases.
 
 ## Next actions
 
-0. **Run manual check M6** (`plan/stage-02b-settings.md`) alongside M1–M5 — it needs the
-   same browser session and one folder that holds no video.
-1. **Run manual checks M1–M5** (`plan/stage-02-ingestion.md`, *Manual checks*). Each is a
-   reproducible sequence with a stated failure condition; M1 and M4 close exit criteria 3
-   and 6, and Stage 2 is done when all five pass. Needs a German video file under
-   `P80_MEDIA_ROOT` and, for the transcription half, the ASR extra installed.
+0. **Run all ten manual checks in one browser session** — Stage 2's M1–M5
+   (`plan/stage-02-ingestion.md`), Stage 2b's M6 (`plan/stage-02b-settings.md`), and
+   Stage 3's M1–M4 (`plan/stage-03-manual-items.md`). They need one German video file under
+   `P80_MEDIA_ROOT`, one folder holding no video, and — for the transcription half — the
+   ASR extra installed. Ten checks is the accumulated cost of three code-complete stages
+   nobody has sat in front of; doing them together is much cheaper than three sittings.
 2. **Label ADR 0006 Pass A.** It blocked nothing in Stage 1 and blocks nothing in Stage 2,
    which is exactly why it keeps not happening — and Stage 4 cannot be tuned without it.
 3. Verify ADR 0001's readiness checklist as Stage 4 approaches. The resources are *named*,
@@ -155,7 +177,7 @@ Nothing blocks the remaining Stage 2 phases.
 | # | Stages | Outcome | State |
 |---|---|---|---|
 | M0 | 0 | Scope locked, providers chosen, evaluation set exists | **decisions done; Pass A outstanding** |
-| M1 | 1–3 | First complete vertical slice: add video → manual item → review it | **Stage 1 done; 2–3 next** |
+| M1 | 1–3 | First complete vertical slice: add video → manual item → review it | **all three code-complete; ten manual checks outstanding** |
 | M2 | 4–6 | Deterministic extraction + dictionary-grounded meanings | not started |
 | M3 | 7–8 | LLM disambiguation, expressions, constructions | not started |
 | M4 | 9–10 | Learner model, adaptive admission, video difficulty | not started |
@@ -196,6 +218,23 @@ two-video corpus** and has to wait for a real library.
 
 ## Notes
 
+- **A sixth silent bug, and the first a live run found before a test did.** Deleting a
+  video left its learning items `active` with no occurrence — the foreign keys cascade
+  `item_occurrences` away and nothing set `archived`, so §7 invariant 5 was violated through
+  the ordinary Delete button. The comment in `deleteVideo` asserted the schema enforced it;
+  the schema does not. Nothing could have caught it before Stage 3, because there were no
+  items, and the first smoke run that created one and then deleted its video hit it in the
+  same pass. `DELETE /api/videos/:id` now archives and reports `archivedItems`. Same family
+  as the five below, with the same shape: everything reported healthy while being wrong.
+- **The greedy session builder needed one non-obvious tiebreak.** Nine cards across three
+  items interleave perfectly, and a first-fit pass could not find the arrangement — it ran
+  the last item's cards together and dropped one. Preferring the item with the most cards
+  left to place fixes it. Recorded because the symptom (a plan one card short) looks like a
+  budget or an allowance, and is neither.
+- **A single-item session shows one card, by design.** §6 rule 2 introduces siblings on
+  different days, and with one item there is nothing to put between them. The plan reports
+  `deferredSiblings` because "1 card" on its own reads as a bug — which it did, twice, in
+  tests written before the reasoning was.
 - **A fifth silent bug, and the first that stopped the product from starting at all.**
   Nothing loaded `.env.local`. It is documented in `SETUP.md`, checked for by `pnpm dev`,
   and was read by no process — Vite loads it for the web client itself, which is why three

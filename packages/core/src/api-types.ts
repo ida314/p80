@@ -15,9 +15,15 @@
 
 import { z } from 'zod';
 import {
+  CARD_TYPES,
+  CONTEXT_MODES,
+  ITEM_STATUSES,
+  LEARNING_ITEM_TYPES,
   MEDIA_SOURCE_KINDS,
   PARSE_WARNING_KINDS,
   PROCESSING_STATUSES,
+  REGISTERS,
+  SCHEDULER_RATINGS,
   TIMING_GRANULARITIES,
   TRANSCRIPT_FORMATS,
   TRANSCRIPT_SOURCES,
@@ -245,6 +251,14 @@ export const transcriptDeletedResponse = z.object({
 
 export const videoDeletedResponse = transcriptDeletedResponse.extend({
   deleted: z.literal(true),
+  /**
+   * Items whose last occurrence went with the video (`01-domain-model.md` §7 invariant 5).
+   *
+   * They are archived, not deleted — review history stays interpretable — and the count is
+   * reported because deleting a video quietly retiring part of a curriculum is exactly the
+   * kind of consequence this codebase states before it is paid.
+   */
+  archivedItems: z.number().int().nonnegative(),
 });
 
 export const interestResponse = z.object({
@@ -317,3 +331,315 @@ export const mediaRootPreflightResponse = z.object({
   orphanedSample: z.array(z.object({ id: z.string(), title: z.string() })),
 });
 export type MediaRootPreflightPayload = z.infer<typeof mediaRootPreflightResponse>;
+
+/* ------------------------------------------------------------ items and review */
+/**
+ * Stage 3 (ADR 0020). `03-api.md` §5 and §6 give paths and no bodies, same as Stage 2, so
+ * these shapes are this stage's resolution of that gap.
+ *
+ * One choice runs through all of them: **the client sends a selection, never a schedule.**
+ * A creation request carries segment ids and character offsets; the server resolves those
+ * to timings against the word array. A rating carries a word from §4's table; the server
+ * decides what it means for a due date. Anything else would put scheduling in a browser,
+ * which ADR 0007 spends its length ruling out.
+ */
+
+export const itemSelectionSchema = z.object({
+  /** The touched segments, in reading order. One for an ordinary selection; more when the
+   *  user dragged across a cue boundary. */
+  segmentIds: z.array(z.string()).min(1).max(8),
+  /** Character offsets into the *joined* text of those segments, joined by one space. */
+  spanStart: z.number().int().nonnegative(),
+  spanEnd: z.number().int().nonnegative(),
+});
+
+export const createItemRequest = z.object({
+  videoId: z.string(),
+  selection: itemSelectionSchema,
+  canonicalForm: z.string().min(1).max(200),
+  itemType: z.enum(LEARNING_ITEM_TYPES),
+  /** The user's own gloss. Stored as a `definitions` row with `provider: 'user'`, and
+   *  rendered as user-authored — never as verified (hard rule 11, ADR 0020 §3). */
+  meaning: z.string().min(1).max(1000),
+  /** A natural rendering in the profile's native language. Optional: an item can be
+   *  understood without being translatable in one phrase, and forcing a translation is how
+   *  a definition acquires a confident-looking wrong answer. */
+  translation: z.string().max(1000).optional(),
+  register: z.enum(REGISTERS).default('neutral'),
+  lemma: z.string().max(200).optional(),
+  partOfSpeech: z.string().max(40).optional(),
+  dialectRegion: z.string().max(80).optional(),
+  offensiveOrSensitive: z.boolean().default(false),
+  /** Overrides for the two judgement calls in `05-cards-and-review.md` §2. Omitted means
+   *  the heuristic decides. */
+  includeAudioCard: z.boolean().optional(),
+  includeClozeCard: z.boolean().optional(),
+});
+export type CreateItemBody = z.input<typeof createItemRequest>;
+
+export const skillStateSchema = z.object({
+  cardId: z.string().nullable(),
+  phase: z.enum(['not_started', 'learning', 'review', 'relearning', 'suspended']),
+  dueAt: z.number().int().nullable(),
+  lastRating: z.enum(SCHEDULER_RATINGS).nullable(),
+  successCount: z.number().int().nonnegative(),
+  lapseCount: z.number().int().nonnegative(),
+});
+
+export const occurrenceResponse = z.object({
+  id: z.string(),
+  itemId: z.string(),
+  videoId: z.string(),
+  sentenceId: z.string(),
+  startMs: z.number().int().nonnegative(),
+  endMs: z.number().int().nonnegative(),
+  /** ADR 0017. `cue` means the clip covers the whole line the item sits in. Surfaced
+   *  rather than absorbed: a replay that plays a whole sentence when a word was asked for
+   *  is a worse answer, not a rounder one (`05-cards-and-review.md` §3.1). */
+  timingPrecision: z.enum(['word', 'cue']),
+  surfaceForm: z.string(),
+  sentenceText: z.string(),
+  precedingText: z.string().nullable(),
+  followingText: z.string().nullable(),
+  isPrimaryOccurrence: z.boolean(),
+});
+export type OccurrencePayload = z.infer<typeof occurrenceResponse>;
+
+export const itemDefinitionSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  definition: z.string(),
+  translation: z.string().nullable(),
+  /** False whenever `evidence` is null. The label the UI must render is *unverified*, and
+   *  it is computed here so two clients cannot disagree about it. */
+  verified: z.boolean(),
+  confidence: z.number().nullable(),
+  isUserEdited: z.boolean(),
+  createdAt: z.number().int(),
+});
+
+export const itemResponse = z.object({
+  id: z.string(),
+  profileId: z.string(),
+  targetLanguage: z.string(),
+  canonicalForm: z.string(),
+  normalizedForm: z.string(),
+  lemma: z.string().nullable(),
+  itemType: z.enum(LEARNING_ITEM_TYPES),
+  senseKey: z.string(),
+  partOfSpeech: z.string().nullable(),
+  meaning: z.string(),
+  register: z.enum(REGISTERS),
+  dialectRegion: z.string().nullable(),
+  offensiveOrSensitive: z.boolean(),
+  status: z.enum(ITEM_STATUSES),
+  /** ADR 0020 §3: zero here means *unscored*, not *worthless*. A manual item bypassed
+   *  admission, and nothing reads these before Stage 6 can compute them. */
+  scores: z.object({
+    domainFrequency: z.number(),
+    contextualDiversity: z.number(),
+    reusePotential: z.number(),
+    extractionConfidence: z.number(),
+    definitionConfidence: z.number(),
+  }),
+  /** True while the three ranking scores are placeholders. */
+  unscored: z.boolean(),
+  translations: z.array(
+    z.object({ language: z.string(), kind: z.string(), text: z.string() }),
+  ),
+  definitions: z.array(itemDefinitionSchema),
+  /** Projected from `cards` on read, never stored (`01-domain-model.md` §2.1). One entry
+   *  per card type, including types with no card — that is what `not_started` is for. */
+  skills: z.record(z.enum(CARD_TYPES), skillStateSchema),
+  occurrences: z.array(occurrenceResponse),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type ItemPayload = z.infer<typeof itemResponse>;
+
+export const itemListResponse = z.object({
+  items: z.array(itemResponse),
+  nextCursor: z.string().nullable(),
+});
+
+/** `03-api.md` §5: "reviews + definition edits + provenance". Append-only, newest first. */
+export const itemHistoryResponse = z.object({
+  itemId: z.string(),
+  reviews: z.array(
+    z.object({
+      id: z.string(),
+      sessionId: z.string().nullable(),
+      cardId: z.string().nullable(),
+      cardType: z.enum(CARD_TYPES),
+      contextMode: z.enum(CONTEXT_MODES),
+      shownAt: z.number().int(),
+      answeredAt: z.number().int().nullable(),
+      responseText: z.string().nullable(),
+      responseLatencyMs: z.number().int().nullable(),
+      /** Null in MVP. §4's step 2 is optional and no LLM runs in Stage 3. */
+      machineClassification: z.string().nullable(),
+      schedulerRating: z.enum(SCHEDULER_RATINGS).nullable(),
+      hintCount: z.number().int().nonnegative(),
+      sourceContextUsed: z.boolean(),
+      occurrenceId: z.string().nullable(),
+    }),
+  ),
+  definitions: z.array(itemDefinitionSchema),
+});
+export type ItemHistoryPayload = z.infer<typeof itemHistoryResponse>;
+
+export const sessionRequestSchema = z.object({
+  desiredMinutes: z.number().int().min(1).max(180).default(20),
+  includeNewItems: z.boolean().default(true),
+  /** Stage 11. Accepted and reported back as unfilled rather than rejected, so a client
+   *  written against the contract does not have to know which stage it is talking to. */
+  includeVideoLoop: z.boolean().default(false),
+  includeTransfer: z.boolean().default(false),
+  includeErrorRepair: z.boolean().default(false),
+});
+
+export const sessionPlanSchema = z.object({
+  cards: z.array(
+    z.object({
+      cardId: z.string(),
+      itemId: z.string(),
+      cardType: z.enum(CARD_TYPES),
+      tier: z.string(),
+      estimatedSeconds: z.number().int().nonnegative(),
+    }),
+  ),
+  estimatedSeconds: z.number().int().nonnegative(),
+  budgetSeconds: z.number().int().nonnegative(),
+  newItemCount: z.number().int().nonnegative(),
+  newItemAllowance: z.number().int().nonnegative(),
+  /** Which §9 constraints had to give, in the order they gave. Empty is the common case,
+   *  and a non-empty list is the plan explaining itself rather than a warning. */
+  relaxations: z.array(z.string()),
+  /** §6 rule 2 at work, not a shortfall. A learner with one item gets one card and two
+   *  siblings held for another day, and the UI needs this number to say so. */
+  deferredSiblings: z.number().int().nonnegative(),
+  unplacedCards: z.number().int().nonnegative(),
+  /** §9 tiers no stage has built yet. Carried so a plan is self-describing. */
+  unimplementedTiers: z.array(z.string()),
+  newItemsSuppressedByBurden: z.boolean(),
+});
+
+export const sessionResponse = z.object({
+  id: z.string(),
+  startedAt: z.number().int(),
+  completedAt: z.number().int().nullable(),
+  request: sessionRequestSchema,
+  plan: sessionPlanSchema,
+});
+export type SessionPayload = z.infer<typeof sessionResponse>;
+
+/** What the review surface renders. The back face is **not** in this payload — it arrives
+ *  from `POST .../answer`, because a reveal that the client already holds is a reveal the
+ *  learner can reach without a retrieval (§1 rule 2, §9.9). */
+export const reviewCardResponse = z.object({
+  reviewId: z.string(),
+  cardId: z.string(),
+  itemId: z.string(),
+  cardType: z.enum(CARD_TYPES),
+  contextMode: z.enum(CONTEXT_MODES),
+  position: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  /** §3.1's miniature player, pre-roll already applied. Null for a card with no clip. */
+  clip: z
+    .object({
+      videoId: z.string(),
+      mediaUrl: z.string(),
+      mediaMissing: z.boolean(),
+      startMs: z.number().int().nonnegative(),
+      endMs: z.number().int().nonnegative(),
+      itemStartMs: z.number().int().nonnegative(),
+      itemEndMs: z.number().int().nonnegative(),
+      timingPrecision: z.enum(['word', 'cue']),
+    })
+    .nullable(),
+  prompt: z.string(),
+  /** The cloze front. Present only on a cloze card, and it is the only place the sentence
+   *  appears before reveal. */
+  clozeText: z.string().nullable(),
+  /** True when the card accepts typed input. §3.1 makes it optional for audio recognition
+   *  — a mental answer is permitted. */
+  acceptsText: z.boolean(),
+  /** §3.2: playback is offered after the first attempt on a cloze, never before. */
+  clipAvailableBeforeAnswer: z.boolean(),
+});
+export type ReviewCardPayload = z.infer<typeof reviewCardResponse>;
+
+export const reviewAnswerRequest = z.object({
+  reviewId: z.string(),
+  responseText: z.string().max(2000).optional(),
+  /** Measured by the client from card render to submit. §23.1 wants it honest, which is
+   *  why it is a separate call from the rating rather than derived from server timings. */
+  responseLatencyMs: z.number().int().nonnegative().optional(),
+  sourceContextUsed: z.boolean().default(false),
+});
+
+/** The back face, §3.1 and §3.2. Returned only once an attempt has been recorded. */
+export const reviewRevealResponse = z.object({
+  reviewId: z.string(),
+  canonicalForm: z.string(),
+  meaning: z.string(),
+  translation: z.string().nullable(),
+  /** False whenever the gloss has no dictionary evidence. */
+  meaningVerified: z.boolean(),
+  sentenceText: z.string(),
+  /** Character offsets of the item within `sentenceText`, for highlighting. The client
+   *  escapes the text and applies the offsets; it never receives markup (hard rule 8). */
+  spanStart: z.number().int().nonnegative(),
+  spanEnd: z.number().int().nonnegative(),
+  precedingText: z.string().nullable(),
+  followingText: z.string().nullable(),
+  /** §3.3: the source sentence is *one* acceptable answer, never the only one. Clients
+   *  render this label; it is not advice, it is part of the card. */
+  isOneOfSeveralAnswers: z.boolean(),
+  /** A structured check where §4's step 1 could make one — cloze only. Null elsewhere. */
+  automaticCheck: z
+    .object({ correct: z.boolean(), expected: z.string() })
+    .nullable(),
+});
+export type ReviewRevealPayload = z.infer<typeof reviewRevealResponse>;
+
+export const reviewRateRequest = z.object({
+  reviewId: z.string(),
+  rating: z.enum(SCHEDULER_RATINGS),
+});
+
+export const reviewRateResponse = z.object({
+  cardId: z.string(),
+  rating: z.enum(SCHEDULER_RATINGS),
+  /** The four intervals FSRS would have produced, so the UI can show what each rating
+   *  costs before it is pressed and what it bought after. */
+  dueAt: z.number().int(),
+  intervalDays: z.number(),
+  phase: z.enum(['not_started', 'learning', 'review', 'relearning', 'suspended']),
+  lapsed: z.boolean(),
+  /** True when the card was requeued into this session — §6 rule 4 puts it back no sooner
+   *  than five intervening cards. */
+  requeued: z.boolean(),
+});
+
+export const dueSummaryResponse = z.object({
+  dueNow: z.number().int().nonnegative(),
+  overdue: z.number().int().nonnegative(),
+  /** Cards, by type, that are due now. A count of items would hide that one item can put
+   *  three cards on the pile. */
+  dueByCardType: z.record(z.enum(CARD_TYPES), z.number().int().nonnegative()),
+  newItemsAvailable: z.number().int().nonnegative(),
+  newItemAllowance: z.number().int().nonnegative(),
+  newItemsIntroducedToday: z.number().int().nonnegative(),
+  estimatedMinutes: z.number(),
+});
+export type DueSummaryPayload = z.infer<typeof dueSummaryResponse>;
+
+/** §8's burden, over the next seven days. */
+export const reviewForecastResponse = z.object({
+  totalMinutes: z.number(),
+  overdueMinutes: z.number(),
+  upcomingMinutes: z.number(),
+  days: z.array(z.object({ date: z.string(), cards: z.number().int(), minutes: z.number() })),
+});
+export type ReviewForecastPayload = z.infer<typeof reviewForecastResponse>;

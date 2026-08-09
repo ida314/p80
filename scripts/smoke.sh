@@ -163,6 +163,107 @@ else
   check "no storage path in job"      ""   "$(curl -s "${API}/api/jobs/${parse_job}" | grep -o 'storage_path\|storagePath' | head -1)"
   check "no media path in response"   ""   "$(echo "${transcript}" | grep -o 'mediaPath\|media_path' | head -1)"
 
+  # ------------------------------------------------------------------ Stage 3
+  # ADR 0007's standing test, in full: `curl` alone must be able to create a learning item
+  # and complete a review session. If any step here needs a browser, scheduling logic has
+  # leaked into a client.
+  #
+  # `${segment}` is the first segment, whose text is "Guten Tag." — so offsets 0..5 select
+  # "Guten". The offsets are what the client sends; the server resolves them to timings.
+  if [[ -n "${segment}" ]]; then
+    echo
+    echo "manual items (ADR 0020)"
+
+    # The sense is stamped with the run, like the media path above. `learning_items`'
+    # identity constraint spans every status, so an item archived by a previous run's video
+    # deletion still holds its sense key — correct behaviour, and it would make a fixed
+    # fixture fail on the second run for a reason that has nothing to do with the code.
+    run_tag="$(date +%s | tail -c 7)"
+    item_body=$(printf '{"videoId":"%s","selection":{"segmentIds":["%s"],"spanStart":0,"spanEnd":5},"canonicalForm":"Guten","itemType":"word","meaning":"good, as a greeting (run %s)","translation":"good"}' "${video}" "${segment}" "${run_tag}")
+    item=$(curl -s -X POST -H 'content-type: application/json' -d "${item_body}" "${API}/api/items" \
+             | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    check "POST /api/items"            "an id" "$([[ -n "${item}" ]] && echo 'an id' || echo 'nothing')"
+
+    # §3.1's identity constraint. Not auto-suffixed into a second sense — a silently
+    # collapsed distinction is invariant 4's failure mode.
+    check "same sense refused"         409 "$(status -X POST -H 'content-type: application/json' \
+                                                -d "${item_body}" "${API}/api/items")"
+    # Rule 4 reaches here too: a selection is untrusted input.
+    check "bad offsets refused"        400 "$(status -X POST -H 'content-type: application/json' \
+                                                -d "$(printf '{"videoId":"%s","selection":{"segmentIds":["%s"],"spanStart":0,"spanEnd":9999},"canonicalForm":"x","itemType":"word","meaning":"y %s"}' "${video}" "${segment}" "${run_tag}")" \
+                                                "${API}/api/items")"
+
+    check "GET /api/items"             200 "$(status "${API}/api/items")"
+    # Hard rule 11: a user-authored gloss carries no dictionary evidence.
+    check "gloss is unverified"        false "$(curl -s "${API}/api/items/${item}" \
+                                                 | grep -o '"verified":[a-z]*' | head -1 | cut -d: -f2)"
+    # ADR 0020 §3: zero here means unscored, not worthless, and the flag says which.
+    check "ranking scores unscored"    true  "$(curl -s "${API}/api/items/${item}" \
+                                                 | grep -o '"unscored":[a-z]*' | cut -d: -f2)"
+
+    echo
+    echo "review session"
+    session=$(curl -s -X POST -H 'content-type: application/json' \
+                -d '{"desiredMinutes":20,"includeNewItems":true}' \
+                "${API}/api/review/session" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    check "POST /api/review/session"   "an id" "$([[ -n "${session}" ]] && echo 'an id' || echo 'nothing')"
+
+    # §7 counts per day, so a second run on the same day starts from a non-zero count.
+    # The assertion has to be a delta, not an absolute — an absolute one would pass exactly
+    # once and then look like a regression.
+    introduced_before=$(curl -s "${API}/api/review/due" \
+                          | grep -o '"newItemsIntroducedToday":[0-9]*' | cut -d: -f2)
+
+    card=$(curl -s "${API}/api/review/session/${session}/next")
+    review_id=$(echo "${card}" | grep -o '"reviewId":"[^"]*"' | cut -d'"' -f4)
+    check "GET .../next returns a card" "an id" "$([[ -n "${review_id}" ]] && echo 'an id' || echo 'nothing')"
+    # §1 rule 2 / §9.9: the back face is not in the front-face payload, or a reveal stops
+    # being an event the server can tell apart from a retrieval.
+    check "the answer is not in it"    ""  "$(echo "${card}" | grep -o 'as a greeting' | head -1)"
+    check "the clip has a window"      "yes" "$(echo "${card}" | grep -qo '"itemStartMs":' && echo yes || echo no)"
+
+    # Rating before the attempt is refused rather than absorbed.
+    check "rating before answering"    409 "$(status -X POST -H 'content-type: application/json' \
+                                                -d "{\"reviewId\":\"${review_id}\",\"rating\":\"good\"}" \
+                                                "${API}/api/review/session/${session}/rate")"
+
+    check "POST .../answer reveals"    200 "$(status -X POST -H 'content-type: application/json' \
+                                                -d "{\"reviewId\":\"${review_id}\",\"responseText\":\"good\",\"responseLatencyMs\":3000}" \
+                                                "${API}/api/review/session/${session}/answer")"
+
+    rated=$(curl -s -X POST -H 'content-type: application/json' \
+              -d "{\"reviewId\":\"${review_id}\",\"rating\":\"good\"}" \
+              "${API}/api/review/session/${session}/rate")
+    check "POST .../rate schedules"    "yes" "$(echo "${rated}" | grep -qo '"dueAt":[0-9]' && echo yes || echo no)"
+    # Exit criterion 3, end to end: the rating moved the card into the future.
+    check "the due date moved forward" "yes" \
+      "$(dueat=$(echo "${rated}" | grep -o '"dueAt":[0-9]*' | cut -d: -f2); \
+         [[ -n "${dueat}" && "${dueat}" -gt "$(date +%s000)" ]] && echo yes || echo no)"
+    # `reviews` is append-only, so a second rating cannot overwrite the first.
+    check "second rating refused"      409 "$(status -X POST -H 'content-type: application/json' \
+                                                -d "{\"reviewId\":\"${review_id}\",\"rating\":\"easy\"}" \
+                                                "${API}/api/review/session/${session}/rate")"
+
+    # Exit criterion 6.
+    history=$(curl -s "${API}/api/items/${item}/history")
+    check "history records the rep"    good "$(echo "${history}" | grep -o '"schedulerRating":"[^"]*"' | head -1 | cut -d'"' -f4)"
+    check "and its latency"            3000 "$(echo "${history}" | grep -o '"responseLatencyMs":[0-9]*' | head -1 | cut -d: -f2)"
+
+    check "POST .../complete"          200 "$(status -X POST -H 'content-type: application/json' -d '{}' \
+                                                "${API}/api/review/session/${session}/complete")"
+    check "a finished session is 409"  409 "$(status "${API}/api/review/session/${session}/next")"
+
+    check "GET /api/review/due"        200 "$(status "${API}/api/review/due")"
+    check "GET /api/review/forecast"   200 "$(status "${API}/api/review/forecast")"
+    # §7 counts items, not cards: one item producing three cards spends one allowance.
+    introduced_after=$(curl -s "${API}/api/review/due" \
+                         | grep -o '"newItemsIntroducedToday":[0-9]*' | cut -d: -f2)
+    check "one item spent, not three"  1   "$(( introduced_after - introduced_before ))"
+
+    check "POST .../suspend"           200 "$(status -X POST "${API}/api/items/${item}/suspend")"
+    check "POST .../unsuspend"         200 "$(status -X POST "${API}/api/items/${item}/unsuspend")"
+  fi
+
   if [[ -n "${segment}" ]]; then
     check "PUT a correction"         200 "$(status -X PUT -H 'content-type: application/json' \
                                               -d '{"text":"Guten Tag!"}' \

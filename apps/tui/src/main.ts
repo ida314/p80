@@ -223,6 +223,112 @@ async function setSetting(
   return 0;
 }
 
+interface ItemSkill {
+  cardId: string | null;
+  phase: string;
+  dueAt: number | null;
+  lapseCount: number;
+}
+
+interface ItemRow {
+  id: string;
+  canonicalForm: string;
+  itemType: string;
+  meaning: string;
+  status: string;
+  unscored: boolean;
+  skills: Record<string, ItemSkill>;
+  occurrences: Array<{ startMs: number }>;
+}
+
+/**
+ * `p80 items` — read-only, and deliberately so.
+ *
+ * ADR 0007 assigns item management to this client, but the surface that *creates* an item
+ * is a transcript selection, which is a browser act. Until the candidate inbox arrives in
+ * Stage 5 and settles the TUI framework question, this is a list: enough to prove the
+ * management surface exists and to inspect what the browser made, without building a
+ * keyboard editor that the framework decision would then throw away.
+ *
+ * Every number comes from the API. The due dates are the projected `SkillState`
+ * (`01-domain-model.md` §2.1), which is computed server-side from `cards` and never stored
+ * twice.
+ */
+async function items(): Promise<number> {
+  const response = await fetch(`${base}/api/items?limit=200`);
+  if (!response.ok) {
+    process.stderr.write(`API returned ${response.status}\n`);
+    return 1;
+  }
+
+  const { items: rows } = (await response.json()) as { items: ItemRow[] };
+  if (rows.length === 0) {
+    process.stdout.write(
+      'No learning items yet.\n\n' +
+        'Items are created from a transcript selection in the browser client, because\n' +
+        'selecting text in a played video is a browser act (ADR 0007).\n',
+    );
+    return 0;
+  }
+
+  const width = Math.min(28, Math.max(...rows.map((r) => r.canonicalForm.length)) + 2);
+  process.stdout.write(
+    pad('form', width) + pad('type', 22) + pad('cards', 7) + pad('due', 6) + 'meaning\n',
+  );
+
+  const now = Date.now();
+  for (const row of rows) {
+    const cards = Object.values(row.skills).filter((s) => s.cardId !== null);
+    const due = cards.filter((s) => s.dueAt !== null && s.dueAt <= now).length;
+    process.stdout.write(
+      pad(row.canonicalForm, width) +
+        pad(row.itemType, 22) +
+        pad(String(cards.length), 7) +
+        pad(String(due), 6) +
+        row.meaning.slice(0, 60) +
+        (row.status === 'active' ? '' : ` [${row.status}]`) +
+        '\n',
+    );
+  }
+
+  // ADR 0020 §3: zero in the ranking columns means *unscored*, not *worthless*, and the
+  // difference is invisible in a table of numbers.
+  const unscored = rows.filter((r) => r.unscored).length;
+  if (unscored > 0) {
+    process.stdout.write(
+      `\n${unscored} of ${rows.length} have no importance score yet — they were created by ` +
+        'hand and\nbypassed admission. Scoring arrives in Stage 6.\n',
+    );
+  }
+  return 0;
+}
+
+/** `p80 due` — the same numbers the browser dashboard shows, for a terminal. */
+async function due(): Promise<number> {
+  const response = await fetch(`${base}/api/review/due`);
+  if (!response.ok) {
+    process.stderr.write(`API returned ${response.status}\n`);
+    return 1;
+  }
+  const summary = (await response.json()) as Record<string, unknown>;
+  for (const key of [
+    'dueNow',
+    'overdue',
+    'newItemsAvailable',
+    'newItemsIntroducedToday',
+    'newItemAllowance',
+    'estimatedMinutes',
+  ]) {
+    const value = summary[key];
+    process.stdout.write(`${pad(key, 26)}${typeof value === 'number' ? Math.round(value * 10) / 10 : String(value)}\n`);
+  }
+  process.stdout.write(
+    '\nReviewing itself is a browser surface: audio recognition needs a video to seek\n' +
+      'and stop against, which a terminal has none of (ADR 0007).\n',
+  );
+  return 0;
+}
+
 function usage(): number {
   process.stdout.write(
     [
@@ -234,6 +340,8 @@ function usage(): number {
       '  jobs      list recent background jobs',
       '  profile   show the current profile',
       '  settings  show configuration, editable and read-only',
+      '  items     list learning items and their card counts',
+      '  due       how many cards are due, and today\'s new-item allowance',
       '',
       '  settings set <key> <value> [--acknowledge-orphans]',
       '            change one setting. --acknowledge-orphans confirms a media root',
@@ -256,6 +364,10 @@ const exitCode = await (async () => {
       return jobs();
     case 'profile':
       return profile();
+    case 'items':
+      return items();
+    case 'due':
+      return due();
     case 'settings': {
       if (process.argv[3] !== 'set') return listSettings();
       const [key, value] = [process.argv[4], process.argv[5]];

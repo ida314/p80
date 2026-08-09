@@ -318,6 +318,7 @@ optimizing for extracted-token counts still holds. Nothing should try to raise i
 ## 5. Items
 
 ```
+POST   /api/items                      # ADDED (ADR 0020): create one from a selection
 GET    /api/items                      # filters per §10.6
 GET    /api/items/:id
 PUT    /api/items/:id
@@ -329,7 +330,53 @@ GET    /api/items/:id/history          # reviews + definition edits + provenance
 ```
 
 `GET /api/items/:id` includes the projected `SkillState` for each card type and the
-score breakdown that admitted the item (§36.3).
+score breakdown that admitted the item (§36.3). Every card type appears in `skills`,
+including types with no card — that is what `not_started` is for, and omitting the key
+would leave a client to guess.
+
+### 5.1 `POST /api/items` <!-- ADDED: ADR 0020 -->
+
+In the finished system an item arrives through `POST /api/candidates/:id/approve`. This is
+the other way in: a person selects transcript text and describes it by hand.
+
+**The body carries a selection, never a timing.**
+
+```ts
+{
+  videoId: string;
+  selection: {
+    segmentIds: string[];   // the touched segments, in reading order
+    spanStart: number;      // character offsets into those segments joined by one space
+    spanEnd: number;
+  };
+  canonicalForm: string;
+  itemType: LearningItemType;
+  meaning: string;          // the user's own gloss
+  translation?: string;     // optional — a forced translation is a confident wrong answer
+  register?: Register;
+  lemma?: string; partOfSpeech?: string; dialectRegion?: string;
+  offensiveOrSensitive?: boolean;
+  includeAudioCard?: boolean;   // overrides for §2's two judgement calls
+  includeClozeCard?: boolean;
+}
+```
+
+The server resolves the offsets against `transcript_words` and derives the clip window; a
+client-supplied `startMs` would be unverifiable and would put a decision about what a clip
+is into a browser. Offsets that do not resolve are `400 INVALID_SELECTION` — never clamped,
+because a clamped selection anchors the item to text nobody highlighted.
+
+This is not an exception to §7.3. That rule keeps the *pipeline* from admitting its own
+output; every field here was typed by a person.
+
+Three further consequences, all argued in ADR 0020:
+
+- `senseKey` is slugified from `meaning`. A collision on the identity constraint is
+  `409 ITEM_SENSE_EXISTS`, naming the existing item — never auto-suffixed.
+- The occurrence anchors to a `sentences` row derived from the touched segments.
+  **Stage 4's reconstruction must relink rather than delete and rebuild.**
+- The three ranking scores are `0` as a placeholder. The response carries `unscored: true`
+  so a client cannot read them as a judgement.
 
 ## 6. Review
 
