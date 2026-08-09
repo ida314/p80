@@ -1,11 +1,12 @@
 # Setup
 
-**Setup is not `pnpm install`.** From Stage 4 it also downloads a spaCy model, two
-Wiktextract dumps, and the OpenSubtitles corpus, then builds a dictionary index and a
-frequency count. Every step is written down here because it is a real cost paid by every
-future contributor, agent sessions included.
+**Setup is not `pnpm install`.** It needs `ffmpeg` and a speech-recognition model to
+transcribe anything; from Stage 4 it also downloads a spaCy model, two Wiktextract dumps,
+and the OpenSubtitles corpus, then builds a dictionary index and a frequency count. Every
+step is written down here because it is a real cost paid by every future contributor, agent
+sessions included.
 
-Stage 1 needs only the first section.
+The first two sections are enough to add a video and read its transcript.
 
 ---
 
@@ -16,6 +17,16 @@ Stage 1 needs only the first section.
 | Node | ≥ 22 | API, worker, clients |
 | pnpm | ≥ 10 | Workspaces |
 | uv | any recent | Python toolchain for the NLP sidecar (ADR 0002) |
+| ffmpeg | ≥ 6 | Decoding audio for transcription, and reading a file's duration (ADR 0015). `ffprobe` ships with it. |
+
+**`ffmpeg` was previously forbidden and is now required.** ADR 0015 replaced the embedded
+player with local media files, and decoding a file the user already holds is the whole of
+what transcription does. It reads local files only — P80 has no downloader, and
+`test/media-policy.test.ts` enforces that.
+
+Without `ffmpeg`, everything still works except transcription and duration detection. A
+video's duration stays unknown rather than being guessed, and you supply a subtitle file
+instead of having one produced.
 
 `better-sqlite3` and `esbuild` run install scripts. They are allow-listed in
 `pnpm-workspace.yaml` under `allowBuilds`, with a note explaining why each is permitted.
@@ -95,6 +106,47 @@ Enforces the enrichment ceilings — 100 candidates per video and 45 minutes per
 hard; 40 h/month, warn only. Not integrated until enrichment exists in Stage 6. It needs
 a transactional SQLite `StorageAdapter` written upstream first, because the shipped
 `InMemoryAdapter` is single-process and both the API and the worker consume budget.
+
+## Speech recognition (ADR 0016)
+
+Optional, and the endpoint reports `501` when it is absent rather than returning an empty
+transcript. Without it, ingestion falls back to supplying your own subtitle file.
+
+```bash
+# The ASR model. Roughly 1.5 GB for large-v3, downloaded on first use and cached.
+uv sync --project services/nlp --extra asr
+
+# Forced alignment refines word timings. Optional on top of the above: when it is missing,
+# timings come from the model's own attention weights, the transcript records
+# `asr_alignment_model_id: null`, and a warning says the timings are less precise. The
+# difference is reported, never absorbed.
+uv sync --project services/nlp --extra asr --extra align
+```
+
+**A GPU is strongly recommended and its absence is loud by default.** Transcription on CPU
+is roughly twenty times slower and otherwise identical, which produces a job that looks
+like it is working for forty minutes. `P80_ASR_REQUIRE_GPU=true` (the default) makes that a
+refusal naming the reason; set it to `0` to run on CPU deliberately.
+
+## The media library (ADR 0015)
+
+`P80_MEDIA_ROOT` is the only directory P80 will read media from. It has **no default**,
+deliberately: every other path can be wrong quietly and recover, but this one decides what
+is reachable at all, and a default would silently make an empty directory your library.
+
+```bash
+# In .env.local
+P80_MEDIA_ROOT=/path/to/your/videos
+```
+
+Videos are added by path relative to that root. P80 reads them where they are — it never
+copies, modifies, or deletes them, and deleting a video inside P80 leaves your file alone.
+A path that escapes the root is rejected rather than normalised.
+
+Supported containers: `.mp4`, `.m4v`, `.mkv`, `.webm`, `.mov`. Playback is a `<video>`
+element, so the browser also has to be able to decode the codec inside — a file that
+transcribes correctly may still not play in every browser, and the transcript works either
+way.
 
 ## Stage 4 and later — the expensive parts
 

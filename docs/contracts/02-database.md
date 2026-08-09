@@ -28,9 +28,88 @@ Conventions:
 `target_language`, `duration_ms`, `speaker_label`, `region_label`, `transcript_status`,
 `processing_status`, `estimated_coverage`, `difficulty_label`, `pipeline_version`,
 `created_at`, `updated_at`
+<!-- ADDED: ADR 0015, ADR 0018. Migration 0002. -->
+`media_path`, `content_hash`, `media_missing`, `media_bytes`
 
 Unique: `(profile_id, source_type, external_video_id)` — this is the duplicate-video
 detection required by Stage 2.
+
+<!-- ADDED: ADR 0018 -->
+**Identity is content; location is a path.** `external_video_id` holds the SHA-256 of the
+file's bytes, so the unique constraint above becomes content-based duplicate detection with
+no change to it. `media_path` is the locator, stored **relative to `P80_MEDIA_ROOT`** — an
+absolute path would break the moment the library moved, which is the class of event this
+design exists to survive.
+
+```
+external_video_id   sha256 hex, 64 chars. Empty until the ingest job computes it.
+media_path          relative to P80_MEDIA_ROOT. Repairable; never an identity.
+media_missing       the file was not there last time P80 looked.
+media_bytes         size at ingest. Cheap mismatch check before re-hashing.
+url                 display locator only. NOT canonical, NOT dereferenced, never fetched.
+```
+
+A rename repairs `media_path` and keeps everything. A re-encode hashes differently and is a
+new video, which is correct: its timings no longer match the existing transcript. Re-pointing
+verifies the hash and refuses a mismatch with both values named — accepting it would silently
+rebind a transcript to audio it does not match.
+
+`media_missing` never cascades. The transcript, word array, items, and review history do not
+need the bytes; only playback does.
+
+**Adding a video is two-phase.** The API writes the row with a path and no hash; the ingest
+job fills in `content_hash`, `media_bytes`, and `duration_ms`, then transcribes. A duplicate
+is therefore detected in the worker, and resolves by pointing the second path at the existing
+video rather than by failing an insert.
+
+<!-- ADDED: not in original spec -->
+**The two status vocabularies.** Neither spec §28 nor this document named their values,
+and Stage 2 is the first code that writes them. Both columns are `TEXT NOT NULL DEFAULT
+'none'`, so `'none'` is a member of each.
+
+```
+transcript_status   none | parsing | ready | failed
+processing_status   none | transcript_ready | queued | processing | complete | failed
+```
+
+Legal `transcript_status` moves, and nothing else:
+
+```
+none    → parsing            an upload was accepted and a parse enqueued
+parsing → ready | failed     the worker finished, one way or the other
+ready   → parsing            replacement re-parses
+failed  → parsing            replacement, or an operator retry
+*       → none               the transcript was deleted
+```
+
+`none → ready` is illegal: it would mean segments appeared without a parse.
+
+**Both are enforced in code rather than by a CHECK constraint**, in four layers: the const
+arrays in `packages/core/src/domain.ts`; a single write path (`setTranscriptStatus`) that
+asserts the table above; `z.enum(...)` in the API response schemas, so a rogue stored value
+fails serialization loudly instead of reaching a client; and a repository test. A CHECK
+could police *membership* only, and membership is not what goes wrong — transitions are.
+Raw SQL can therefore still write an unlisted value, which the repository test documents
+deliberately.
+
+<!-- REVISED: migration 0002 was the "next migration", and the CHECKs still did not land.
+     The reason turned out to be a hazard rather than a preference. -->
+**The two CHECKs are permanently deferred, and this is why.** SQLite cannot add a CHECK to
+an existing table; it requires the 12-step rebuild. `DROP TABLE videos` under
+`PRAGMA foreign_keys = ON` — which `client.ts` sets — performs an implicit DELETE that
+**fires `ON DELETE CASCADE` on every child table**, destroying every transcript, segment,
+correction, sentence, token, and occurrence. `PRAGMA defer_foreign_keys` does not help: it
+defers constraint *violations*, not cascade *actions*, and `PRAGMA foreign_keys` is a no-op
+inside a transaction, which is where every migration runs.
+
+Landing them safely needs a migration runner that can take a file outside its transaction
+and toggle the pragma around it. That is real machinery for a constraint that polices
+membership only. Migration 0002 carries the same warning at the top, because the tempting
+next move is to "just add the CHECK".
+
+Stage 2 writes only `none` and `transcript_ready` to `processing_status`. The remaining
+four are declared now so Stage 4 does not have to reopen the vocabulary — the same pattern
+`MEDIA_SOURCE_KINDS` uses for its deferred members.
 
 ### `video_interests`
 `video_id`, `interest_id`, `relevance` (0..1)
@@ -48,12 +127,60 @@ effective_interest_weight(video, interest) = (interests.weight / 5) * video_inte
 ### `transcript_files`
 `id`, `video_id`, `format`, `original_filename`, `storage_path`, `checksum`,
 `parser_version`, `parse_warnings_json`, `created_at`
+<!-- ADDED: ADR 0016, ADR 0017. Migration 0002. -->
+`source`, `timing_granularity`, `asr_model_id`, `asr_alignment_model_id`,
+`detected_language`, `language_probability`
+
+```
+source              asr | upload
+timing_granularity  word | cue
+```
+
+**`source` is load-bearing for Stage 4, not bookkeeping.** ADR 0013 keys
+`punct_confidence` on where a transcript came from: a model that punctuated with prosodic
+access to the audio and a scraped auto-caption track with no punctuation at all are not
+equally reliable evidence of a sentence ending. The weight is chosen from this column and
+measured against the ADR 0006 corpus.
+
+`storage_path` is null for `source = 'asr'` — there is no uploaded file. `checksum` is over
+the canonical serialization of the ASR result, so a re-run is comparable.
+
+### `transcript_words` <!-- ADDED: ADR 0017. Migration 0002. -->
+`id`, `video_id`, `transcript_file_id`, `word_index`, `text`, `start_ms`, `end_ms`,
+`confidence`
+
+Unique: `(transcript_file_id, word_index)`.
+
+**Where a transcript has word timing, this table is the source of truth** and
+`transcript_segments` are index ranges over it. ASR writes it once; nothing downstream
+rewrites it. The denormalised text and timing on `transcript_segments` exist for
+debuggability and for queries, and are rebuilt from the indices rather than edited — an
+index range cannot desynchronise from the timing its text is bound to, and every alternative
+can.
+
+Populated only when `transcript_files.timing_granularity = 'word'`. Uploaded VTT and SRT
+carry no word timing and never will, which is why the tier is a stored column rather than
+something inferred from the absence of rows: consumers branch on it, and a capability read
+off a missing join is a capability nobody can see in a schema diagram.
 
 ### `transcript_segments`
 `id`, `video_id`, `start_ms`, `end_ms`, `speaker_label`, `raw_text`, `normalized_text`,
 `confidence`, `sequence_index`
+<!-- ADDED: ADR 0017. Migration 0002. Null at timing_granularity = 'cue'. -->
+`word_start_index`, `word_end_index`
 
 Never mutated after ingestion. Corrections live in `transcript_corrections`.
+
+`word_start_index` / `word_end_index` are a half-open range into `transcript_words`.
+
+**A correction does not rewrite words.** The word array is the original ASR evidence — what
+the model heard and when; a correction is the user's reading of what was said. Both are kept
+because they answer different questions, and "original data is immutable" is a standing
+invariant. The consequence, stated so it is not discovered as a bug: a token span inside a
+**corrected** segment falls back to cue timing, because the word alignment no longer indexes
+the effective text. One helper in `packages/core` resolves a span against whichever tier
+applies, so both fallbacks — corrected segment, and `cue`-tier transcript — live at a single
+call site rather than at every consumer.
 
 ### `sentences`
 `id`, `video_id`, `start_ms`, `end_ms`, `text`, `normalized_text`, `complexity_score`,

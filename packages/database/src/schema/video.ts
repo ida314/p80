@@ -18,10 +18,17 @@ export const videos = sqliteTable(
     estimatedCoverage: real('estimated_coverage'),
     difficultyLabel: text('difficulty_label'),
     pipelineVersion: text('pipeline_version'),
+    /** Relative to `P80_MEDIA_ROOT` (ADR 0015). An absolute path would break the moment
+     *  the library moved, which is the event this design exists to survive. */
+    mediaPath: text('media_path'),
+    /** 0/1. Never cascades — only playback needs the bytes (ADR 0018 §3). */
+    mediaMissing: integer('media_missing').notNull(),
+    mediaBytes: integer('media_bytes'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
-  // Stage 2's duplicate-video detection is this constraint, not application logic.
+  // Duplicate-video detection is this constraint, not application logic. Since ADR 0018
+  // `externalVideoId` is a content hash, so it now catches renames and copies too.
   (t) => [unique().on(t.profileId, t.sourceType, t.externalVideoId)],
 );
 
@@ -36,12 +43,49 @@ export const transcriptFiles = sqliteTable('transcript_files', {
   videoId: text('video_id').notNull(),
   format: text('format').notNull(),
   originalFilename: text('original_filename'),
+  /** Null for `source = 'asr'` — there is no uploaded file. */
   storagePath: text('storage_path'),
   checksum: text('checksum').notNull(),
   parserVersion: text('parser_version').notNull(),
   parseWarningsJson: text('parse_warnings_json'),
+  /** `asr` | `upload`. Load-bearing for Stage 4, not bookkeeping: ADR 0013 keys
+   *  `punct_confidence` on where a transcript came from, because a model that punctuated
+   *  with access to the audio and an auto-caption track with no punctuation at all are not
+   *  equally reliable evidence of a sentence ending. */
+  source: text('source').notNull(),
+  /** `word` | `cue` (ADR 0017). */
+  timingGranularity: text('timing_granularity').notNull(),
+  asrModelId: text('asr_model_id'),
+  asrAlignmentModelId: text('asr_alignment_model_id'),
+  detectedLanguage: text('detected_language'),
+  languageProbability: real('language_probability'),
   createdAt: integer('created_at').notNull(),
 });
+
+/**
+ * The source of truth where a transcript has word-level timing (ADR 0017).
+ *
+ * Written once by the ASR job and never rewritten. `transcriptSegments` are half-open
+ * index ranges over this array; their denormalised text and timing are rebuilt from the
+ * indices rather than edited, because an index range cannot desynchronise from the timing
+ * its text is bound to.
+ */
+export const transcriptWords = sqliteTable(
+  'transcript_words',
+  {
+    id: text('id').primaryKey(),
+    videoId: text('video_id').notNull(),
+    transcriptFileId: text('transcript_file_id').notNull(),
+    wordIndex: integer('word_index').notNull(),
+    text: text('text').notNull(),
+    startMs: integer('start_ms').notNull(),
+    endMs: integer('end_ms').notNull(),
+    /** Null where the aligner could not place the word. A number meaning "unknown" would
+     *  be indistinguishable from a bad score, and an unplaced word has no clip at all. */
+    confidence: real('confidence'),
+  },
+  (t) => [unique().on(t.transcriptFileId, t.wordIndex)],
+);
 
 /** Never mutated after ingestion. Corrections live in `transcriptCorrections`. */
 export const transcriptSegments = sqliteTable('transcript_segments', {
@@ -54,6 +98,9 @@ export const transcriptSegments = sqliteTable('transcript_segments', {
   normalizedText: text('normalized_text').notNull(),
   confidence: real('confidence'),
   sequenceIndex: integer('sequence_index').notNull(),
+  /** Half-open range into `transcriptWords`. Null at `timing_granularity = 'cue'`. */
+  wordStartIndex: integer('word_start_index'),
+  wordEndIndex: integer('word_end_index'),
 });
 
 export const transcriptCorrections = sqliteTable('transcript_corrections', {

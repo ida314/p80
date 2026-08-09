@@ -30,7 +30,7 @@ written.**
 
 | | |
 |---|---|
-| **Hardware** | NVIDIA Spark — 128 GB unified memory, ample capacity, modest memory bandwidth |
+| **Hardware assumed** | A unified-memory workstation with ~128 GB available to the model — ample capacity, modest memory bandwidth |
 | **Serving** | vLLM, OpenAI-compatible HTTP endpoint, loopback only |
 | **Interface** | `LlmProvider` (`docs/contracts/04-providers.md` §4), unchanged in shape |
 | **Model** | Largest German-competent instruct model that fits and sustains usable batch throughput; see *Model selection* |
@@ -63,8 +63,9 @@ ceiling on the largest model that fits, then measure what a smaller one costs yo
 accuracy on the labelled set.** Choosing the fast model first leaves you unable to tell
 whether disappointing extraction is a model limitation or a prompt problem.
 
-The Spark's constraint is **bandwidth, not capacity**. 128 GB holds a large model
-comfortably; token generation on a large dense model is slow. That points at either a
+The binding constraint on this class of machine is **bandwidth, not capacity**. 128 GB holds
+a large model comfortably; token generation on a large dense model is slow. That points at
+either a
 mixture-of-experts model with a small active-parameter count, or a quantized dense model in
 the 30–70B range. Which one is a Stage 7 measurement against the ADR 0006 corpus, recorded
 as a number, not settled here by impression.
@@ -134,7 +135,8 @@ a policy.
 
 ### Enforcement: `uselimit`
 
-Enforcement uses **`uselimit`** (`~/Projects/uselimit`, MIT, `@uselimit/core`). Its
+Enforcement uses **`uselimit`** (`@uselimit/core`, MIT — a sibling project by the same
+author, not yet published to npm; see the three costs below). Its
 `check()` → operate → `consume()` shape maps onto the worker's enrichment loop exactly, and
 its immutable usage events are the same idea as `provider_calls` — refuse early when the
 budget is gone, and only charge for work actually done.
@@ -160,8 +162,8 @@ Three honest costs of this dependency, recorded so they are not discovered at in
 2. **`consume()` is documented as unsafe against concurrent double-spend** without a
    transactional adapter. The SQLite adapter must therefore do check-and-deduct in a single
    transaction. This is the substantive part of the upstream work, not the schema.
-3. **`uselimit` is not on npm.** Setup gains a clone-and-link step, and the pinned local
-   path is a reproducibility wrinkle to remove once published.
+3. **`uselimit` is not on npm.** Setup gains a clone-and-link step against a local checkout,
+   and that pinned path is a reproducibility wrinkle to remove once published.
 
 `provider_calls` (`docs/contracts/02-database.md` §2) still records tokens and latency per
 call from the first commit, so §31.3's *cost per retained item* remains computable — now
@@ -175,7 +177,7 @@ full.** What replaced it and why:
 
 | Drafted | Now | Reason |
 |---|---|---|
-| Anthropic API behind `LlmProvider` | Local vLLM behind `LlmProvider` | Spark hardware available; local-first (§7.2) has no reason to make an exception |
+| Anthropic API behind `LlmProvider` | Local vLLM behind `LlmProvider` | Capable local hardware available; local-first (§7.2) has no reason to make an exception |
 | `claude-opus-5` ceiling → `claude-sonnet-5` production | Largest fitting local model → measure smaller | Same method, currency changed from dollars to wall-clock |
 | Message Batches API, 50% off | vLLM continuous batching | Throughput lever, no billing dimension |
 | Prompt caching | vLLM prefix caching | Same prompt discipline, different mechanism |

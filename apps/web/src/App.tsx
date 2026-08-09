@@ -4,7 +4,9 @@ import { ApiError, getHealth, type Health } from './api.js';
 import { ErrorBoundary } from './ErrorBoundary.js';
 import { Today } from './pages/Today.js';
 import { Videos } from './pages/Videos.js';
+import { AddVideo } from './pages/AddVideo.js';
 import { VideoDetail } from './pages/VideoDetail.js';
+import { VideoTranscript } from './pages/VideoTranscript.js';
 import { Review } from './pages/Review.js';
 
 /**
@@ -14,7 +16,7 @@ import { Review } from './pages/Review.js';
  * Candidates, Items, Settings, and Diagnostics as web pages. That list predates ADR 0007,
  * which assigns the last four to the TUI: they are the highest-volume, keyboard-driven,
  * pure-text surfaces, and building them in React now would create pages to be deleted.
- * The browser keeps what needs the YouTube IFrame player and `MediaRecorder`.
+ * The browser keeps what needs a video surface and `MediaRecorder`.
  */
 const NAV = [
   { to: '/', label: 'Today', end: true },
@@ -66,7 +68,13 @@ export function App() {
           <Routes>
             <Route path="/" element={<Today />} />
             <Route path="/videos" element={<Videos />} />
+            {/* Real routes, not modals: linkable, back-button-correct, and each one is
+                scoped by the `ErrorBoundary` above. `/videos/new` has to precede
+                `/videos/:id` conceptually but not textually — the router prefers the
+                static segment either way. */}
+            <Route path="/videos/new" element={<AddVideo />} />
             <Route path="/videos/:id" element={<VideoDetail />} />
+            <Route path="/videos/:id/transcript" element={<VideoTranscript />} />
             <Route path="/review" element={<Review />} />
           </Routes>
         </ErrorBoundary>

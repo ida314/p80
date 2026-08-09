@@ -13,7 +13,7 @@ import {
 } from '@p80/database';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createWorker } from '../src/loop.js';
-import { JobRegistry, createStage1Registry } from '../src/registry.js';
+import { JobRegistry, createNoopRegistry } from '../src/registry.js';
 
 /**
  * Stage 1 exit criterion 4 — "worker can claim and complete a test job".
@@ -52,7 +52,7 @@ describe('job claim loop', () => {
     const job = enqueueJob(handle, 'NOOP', { entityType: 'test', entityId: 'x' });
     expect(job.status).toBe('pending');
 
-    const worker = createWorker({ handle, registry: createStage1Registry(), logger });
+    const worker = createWorker({ handle, registry: createNoopRegistry(), logger });
     expect(await worker.tick()).toBe(job.id);
 
     const done = getJob(handle, job.id)!;
@@ -65,7 +65,7 @@ describe('job claim loop', () => {
 
   it('returns null when nothing is waiting', async () => {
     const handle = fresh();
-    const worker = createWorker({ handle, registry: createStage1Registry(), logger });
+    const worker = createWorker({ handle, registry: createNoopRegistry(), logger });
     expect(await worker.tick()).toBeNull();
   });
 
@@ -90,7 +90,7 @@ describe('job claim loop', () => {
     const low = enqueueJob(handle, 'NOOP', { priority: 0 });
     const high = enqueueJob(handle, 'NOOP', { priority: 10 });
 
-    const worker = createWorker({ handle, registry: createStage1Registry(), logger });
+    const worker = createWorker({ handle, registry: createNoopRegistry(), logger });
     expect(await worker.tick()).toBe(high.id);
     expect(await worker.tick()).toBe(low.id);
   });

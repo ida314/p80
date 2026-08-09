@@ -6,7 +6,7 @@ Source: original spec §9 (terminology), §13 (item model), §15 (function-word 
 
 | Term | Definition |
 |---|---|
-| **Source** | A video, audio recording, or transcript from which language is extracted. In MVP, always a YouTube video plus a user-supplied transcript — but the domain unit is a timed media source, not a YouTube video. See `04-providers.md` §1, *Provider independence*. |
+| **Source** | A video, audio recording, or transcript from which language is extracted. In MVP, always a local media file the user already holds, plus a transcript — produced by local ASR, or supplied by the user (ADR 0016). The domain unit is a *timed media source*, and P80 holds a reference to it rather than a copy. See `04-providers.md` §1, *Provider independence*. |
 | **Transcript segment** | One timestamped block of transcript text, as it appeared in the uploaded file. Never modified by the pipeline; corrections are recorded separately. |
 | **Sentence** | A reconstructed, syntactically complete utterance. A subtitle line is *not* a sentence; several lines may form one, and one line may contain several. |
 | **Learning item** | The canonical object representing something the learner may study. |

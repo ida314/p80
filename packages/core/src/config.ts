@@ -22,6 +22,20 @@ export const configSchema = z.object({
   P80_WEB_PORT: port.default(5173),
   P80_NLP_PORT: port.default(5181),
   P80_DB_PATH: z.string().min(1).default('./data/p80.db'),
+  /** Where uploaded transcript files are kept (spec §7.2). Same anchoring hazard as
+   *  `P80_DB_PATH`: the API writes and the worker reads, and `pnpm --filter` runs each in
+   *  its own directory. */
+  P80_STORAGE_PATH: z.string().min(1).default('./data/storage'),
+  /**
+   * The only directory P80 will read media from (ADR 0015, `CLAUDE.md` rule 4).
+   *
+   * **No default, deliberately.** Every other path here can be wrong quietly and recover;
+   * this one decides what the containment check contains. A default of `./data/media`
+   * would silently make an empty directory the library, and the symptom — "my file isn't
+   * there" — points at the file rather than at the root. An unset value is a startup
+   * error naming the variable.
+   */
+  P80_MEDIA_ROOT: z.string().min(1),
   P80_LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
@@ -55,6 +69,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // `pnpm --filter`, which runs each in its own package directory, so a relative path
     // would silently give them one database each — see `resolveFromRepoRoot`.
     P80_DB_PATH: resolveFromRepoRoot(parsed.data.P80_DB_PATH),
+    // Same reason, and the same failure would be just as quiet: the API writes the
+    // uploaded file and the worker reads it back, so two roots means every parse fails
+    // with a missing file that is plainly there.
+    P80_STORAGE_PATH: resolveFromRepoRoot(parsed.data.P80_STORAGE_PATH),
+    // Third instance of the same hazard, and the worst of the three: the API validates a
+    // path against this root and the worker resolves it against this root, so a
+    // per-process value would mean a path that passed containment in one process escapes
+    // it in the other. Anchoring is a correctness property here, not tidiness.
+    P80_MEDIA_ROOT: resolveFromRepoRoot(parsed.data.P80_MEDIA_ROOT),
   };
 }
 

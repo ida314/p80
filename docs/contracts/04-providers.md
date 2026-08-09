@@ -9,29 +9,48 @@ provider SDK directly.
 
 ## 1. `MediaSourceAdapter`
 
+<!-- RESOLVED (ADR 0015): spec §8 describes an embedded-YouTube media path and the
+     acquisition prohibitions that follow from it. P80 no longer has that path. The unit is
+     a local media file the user already holds, referenced and never copied. The spec is
+     frozen and stays wrong here; this section is authoritative. -->
+
 ```ts
 interface MediaSourceAdapter {
   readonly kind: MediaSourceKind;
+  /** Whether this adapter reads bytes the user already holds. True for `local_media`. */
   readonly supportsLocalMedia: boolean;
+  /** Whether P80 can obtain a transcript without the user supplying one. True since
+   *  ADR 0016 — by transcribing the media locally, never by fetching one. */
   readonly supportsAutomaticTranscriptAccess: boolean;
 
   validate(input: MediaSourceInput): Promise<ValidationResult>;
-  getEmbedDescriptor(source: MediaSource): EmbedDescriptor;
+  getMediaDescriptor(source: MediaSource): MediaDescriptor;
   parseTranscript(file: TranscriptInput): Promise<TranscriptParseResult>;
 }
 
 type MediaSourceKind =
-  | "youtube_embedded"
+  | "local_media"
   | "user_uploaded_transcript"
-  | "local_media"              // DEFERRED
-  | "licensed_corpus"          // DEFERRED
-  | "authorized_youtube_owner"; // DEFERRED
+  | "licensed_corpus";         // DEFERRED
 
-interface EmbedDescriptor {
-  provider: "youtube";
-  externalVideoId: string;
+/** ADR 0015: replaces `EmbedDescriptor`. The client renders this rather than constructing
+ *  a player from a path — the same rule as before, with a different player. */
+interface MediaDescriptor {
+  kind: "local_media";
+  /** The API route that serves bytes, with Range support. Never a filesystem path: the
+   *  client must not learn where media lives, and a path is not a URL. */
+  mediaUrl: string;
+  /** True when the referenced file is gone. The client shows a repair affordance and does
+   *  not attempt playback (ADR 0018). */
+  missing: boolean;
   startSeconds?: number;
   endSeconds?: number;
+}
+
+interface MediaSourceInput {
+  /** User-supplied, therefore untrusted (rule 4 below). Resolved under `P80_MEDIA_ROOT`
+   *  or rejected — never normalised into something acceptable. */
+  path: string;
 }
 
 interface TranscriptParseResult {   // ADDED: the spec returns bare segments, which
@@ -42,69 +61,199 @@ interface TranscriptParseResult {   // ADDED: the spec returns bare segments, wh
 }
 
 interface ParseWarning {
-  kind: "overlapping_timestamps" | "out_of_order" | "missing_punctuation"
-      | "malformed_line" | "unparsed_region" | "encoding_fallback"
-      | "suspicious_duration";
-  segmentIndex: number | null;
-  message: string;
+  kind: ParseWarningKind;           // ADR 0014: the list lives in `packages/core`
+  segmentIndex: number | null;      // null for a whole-file anomaly
+  message: string;                  // never contains transcript text
 }
 ```
 
-MVP implements `youtube_embedded` and `user_uploaded_transcript` only.
+<!-- ADDED: not in original spec -->
+**ADR 0014** amends `ParseWarning` in two ways. It adds an eighth kind,
+`subtitle_boilerplate` — ADR 0013 §4 requires a countable, user-visible warning for
+subtitle-distribution noise, and none of the original seven fits, because the cue is
+well-formed and nothing was unparsed. And it moves the vocabulary to
+`PARSE_WARNING_KINDS` in `packages/core/src/domain.ts`, beside every other contract enum,
+because this is persisted to `transcript_files.parse_warnings_json` and so needs a runtime
+value that can back a Zod schema, a severity map, and an exhaustiveness test.
+
+```
+overlapping_timestamps · out_of_order · missing_punctuation · malformed_line
+unparsed_region · encoding_fallback · suspicious_duration · subtitle_boilerplate
+low_asr_confidence · unaligned_words
+```
+
+<!-- ADDED: ADR 0016 -->
+**ADR 0016 adds the last two, for the ASR path.** ADR 0013 took a list of
+subtitle-boilerplate regexes from a sibling project and noted that the confidence checks
+around them — no-speech probability, average log-probability, and a repeat-window check for
+a stuck decoder — did *not* transfer, because user-supplied transcripts carry no such
+signals. ASR output does, so they transfer now and report as `low_asr_confidence`.
+
+`unaligned_words` covers the forced aligner failing to place a word in time. It is the one
+warning that changes what downstream consumers can do rather than merely what they should
+believe, because an unaligned word has no timestamp to build a clip from.
+
+Both follow the existing rule: a warning never causes a row to be dropped. Whisper
+fabricates fluent, correctly formatted speech over music and silence, and the answer to that
+is a visible warning on a stored row, not a silent deletion.
+
+Two rules govern what a warning may contain, both enforced by the collector's API rather
+than by discipline:
+
+- **A message never contains transcript text** — only kind names, indices, counts, line
+  numbers, and pattern names. This column is persisted forever and re-served on every
+  transcript read, which makes it a render surface even though nothing about it looks like
+  one (`CLAUDE.md` rule 8).
+- **Warnings are capped per kind**, with the suppressed count preserved. A three-thousand
+  cue auto-caption file would otherwise turn an unbounded `TEXT` column into a stored
+  amplification vector.
+
+A warning never causes a cue to be dropped. §14.2 forbids discarding transcript content
+silently, and a boilerplate match in particular is stored like any other row — ADR 0013
+takes the pattern list and explicitly rejects the filter it came wrapped in.
+
+MVP implements `local_media` and `user_uploaded_transcript` only.
 
 ### Provider independence
 
-**YouTube is one adapter, not the foundation.** The unit P80 reasons about is a *timed
-media source plus a transcript* — an `.mp4` or equivalent, with an interval to play.
-`youtube_embedded` is the MVP implementation of that shape because it is the cheapest
-lawful route to a large library, not because the domain depends on it. Nothing above
-`MediaSourceAdapter` may assume YouTube: video IDs, the IFrame API, and `youtu.be` URLs
-all live behind the interface.
+**The domain unit is a timed media source plus a transcript** — an `.mp4` or equivalent,
+with an interval to play. `local_media` is the MVP implementation of that shape: a file the
+user already holds, referenced by path, identified by content (ADR 0018). Nothing above
+`MediaSourceAdapter` may assume a local file any more than it was allowed to assume a
+YouTube id — paths, byte ranges, and container formats all live behind the interface.
 
-This keeps `local_media` (user-supplied `.mp4`) and further embedded providers available
-later as new adapters rather than as a refactor. Two constraints on that path, recorded so
-they are not rediscovered:
+The interface earned its keep once already: ADR 0015 removed the `youtube_embedded` adapter
+by deleting it, not by refactoring the system around it. Two constraints on any future
+adapter, recorded so they are not rediscovered:
 
-- **The hard rules below govern acquisition, not playback surface.** Rules 1–3 forbid P80
-  from *obtaining* media it was not given. A file the user already holds is not in that
-  category. Rule 4 *is* playback-surface and would need amending for `local_media` — an
-  ADR when that adapter is built, not a change now.
+- **The hard rules below govern acquisition, not playback surface.** They forbid P80 from
+  *obtaining* media it was not given. A file the user already holds is not in that category,
+  which is the entire basis of `local_media`.
 - **DRM-protected services stay out of reach regardless of adapter design.** Provider
   independence means the interface does not preclude a provider; it does not make one
-  possible where there is no embeddable player or lawful programmatic seek.
+  possible where there is no lawful programmatic seek.
 
-### Hard media rules (§8, §38.8)
+### Hard media rules (ADR 0015)
+
+<!-- RESOLVED (ADR 0015): these replace spec §8 and §38.8's five rules, which were written
+     against embedded YouTube. The prohibitions that had a subject were kept; the two that
+     described the old playback surface were deleted along with it. -->
 
 These are not negotiable and no ticket may relax them without a policy review recorded in
 `docs/decisions/`:
 
-1. **Never download YouTube video or audio.** No `yt-dlp`, no stream extraction, no
-   proxying of media bytes.
-2. **Never isolate or store an audio track.**
-3. **Never scrape public captions.** Transcripts are user-supplied in MVP.
-4. Playback happens exclusively through the YouTube IFrame Player API.
-5. Playback precision is approximate — the player starts at the nearest keyframe. The UI
-   must never claim frame-accurate playback (§19.1).
+1. **P80 never acquires media.** No downloader, no stream extraction, no URL that resolves
+   to media bytes. How a file arrived on disk is outside the system.
+2. **P80 makes no outbound request to obtain a transcript.** ASR is local (ADR 0016);
+   upload is user-supplied. Neither path leaves the machine.
+3. **P80 never copies media into its own storage.** It holds a reference and reads through
+   it. The storage root holds transcripts and derived artifacts, never media.
+4. **A media path is untrusted input.** It resolves under `P80_MEDIA_ROOT` or it is
+   rejected — never sanitised into something acceptable.
+
+The old rule 2, *never isolate or store an audio track*, is **deleted**. It existed to stop
+stream extraction becoming an audio-download path by increments, and with user-supplied
+local files it has no subject: the user holds the audio and decoding it is the whole of what
+ASR does. Rule 3 is what now protects the storage directory, and unlike rule 2 it is
+mechanically checkable. ADR 0015 records the cost of the deletion.
+
+The old rule 5, *never claim frame-accurate playback*, is **deleted** because the condition
+that required it is gone. Seeking a decoded local file is sample-accurate.
 
 ### Clip playback procedure (§19.1)
 
-1. Load the embedded player near the target interval.
-2. Seek to `startMs` once the player reports ready.
-3. Poll current time.
-4. Pause at `endMs + postRoll`.
-5. Let the user nudge the occurrence boundary and persist the adjustment.
+<!-- RESOLVED (ADR 0015): the spec's procedure is written around the IFrame player's
+     ready/poll lifecycle and its keyframe-bounded seek. Steps 1-4 collapse against a
+     `<video>` element, which seeks precisely and reports its own state. -->
+
+1. Point the player at `MediaDescriptor.mediaUrl`; the byte range for the target interval is
+   fetched on demand.
+2. Seek to `startMs`. The seek is exact.
+3. Pause at `endMs + postRoll`.
+4. Let the user nudge the occurrence boundary and persist the adjustment.
 
 Pre-roll and post-roll are user-configurable settings, not constants.
 
-**This procedure is browser-only.** The IFrame Player API cannot run in a terminal, which
-is why review sessions and the video loop live in the web client while management surfaces
-live in the TUI (ADR 0007). `MediaRecorder` (§19.3–19.4) is browser-only for the same
-reason; voice is optional in MVP (§21.5), so this does not block TUI coverage elsewhere.
+**This procedure is browser-only**, which is unchanged by ADR 0015 and is still why review
+sessions and the video loop live in the web client while management surfaces live in the TUI
+(ADR 0007). The reasoning never depended on the IFrame API: a terminal has no video surface.
+`MediaRecorder` (§19.3–19.4) is browser-only for the same reason; voice is optional in MVP
+(§21.5), so this does not block TUI coverage elsewhere.
 
-Timestamped links — `https://youtu.be/<id>?t=<seconds>`, or `embed/<id>?start=&end=` — are
-within policy and are the right mechanism for **navigation** from any client ("open this
-occurrence"). They are not a substitute for the audio-recognition card, which needs
-programmatic seek-and-stop, replay, and a hidden-then-revealed transcript.
+For **navigation** from a client that cannot play media — "open this occurrence" from the
+TUI — the mechanism is a deep link into the web client at a timestamp, not a media URL. The
+TUI must not be handed a path to hand to an external player: that would put media access
+outside the one route that enforces rule 4.
+
+### Media serving
+
+One route reads the filesystem for media: `GET /api/videos/:id/media` (`03-api.md` §3).
+
+- It resolves `videos.media_path` under `P80_MEDIA_ROOT` and refuses anything outside, with
+  the same prefix test `storage.ts` uses for transcripts.
+- It supports HTTP Range, because `<video>` requires it to seek.
+- It streams. Media files are gigabytes; nothing buffers a whole one.
+- It produces no copy. A missing file is a 404 and sets `videos.media_missing`, never a
+  cached duplicate.
+
+---
+
+## 1a. `AsrProvider` <!-- ADDED: ADR 0016 -->
+
+```ts
+interface AsrProvider {
+  readonly name: string;
+  /** Recorded on the transcript so it is attributable and recomputable across a model
+   *  change — the same requirement §27.5 places on annotations. */
+  readonly modelId: string;
+  readonly alignmentModelId: string | null;
+
+  transcribe(request: AsrRequest): Promise<AsrResult>;
+}
+
+interface AsrRequest {
+  /** Absolute, already resolved under `P80_MEDIA_ROOT` by the caller. The provider does
+   *  not re-derive it from user input. */
+  mediaPath: string;
+  /** Pinned from `profile.target_language`, never detected. A detected language that
+   *  disagrees fails the job with both values named (ADR 0016 §3). */
+  language: string;
+}
+
+interface AsrResult {
+  /** Flat, in time order. THE source of truth (ADR 0017) — Whisper's own segment
+   *  boundaries are discarded, because they come from the decoding window rather than
+   *  from linguistics. */
+  words: AsrWord[];
+  detectedLanguage: string;
+  languageProbability: number;
+  /** Confidence anomalies, as warnings. Never a dropped word (§14.2). */
+  warnings: ParseWarning[];
+  durationMs: number;
+}
+
+interface AsrWord {
+  text: string;
+  startMs: number;
+  endMs: number;
+  /** Alignment confidence, 0..1. Null where the aligner could not place the word — a
+   *  number that means "unknown" would be indistinguishable from a bad score. */
+  confidence: number | null;
+}
+```
+
+Failure behaviour, all three of which are cases where the system would otherwise report
+success while being wrong (ADR 0016 §3):
+
+- **A sidecar with no ASR model returns 501**, matching `/annotate`. It never degrades to an
+  empty transcript.
+- **It never falls back to CPU silently.** GPU configured and unavailable is a refusal
+  naming which, not a job that runs twenty times slower and looks healthy.
+- **A language mismatch is an error**, not a guess.
+
+Degraded mode: with no ASR available, ingestion falls back to the user-supplied upload path
+and says so. This is a standing test requirement, like §5.2's no-LLM case — the suite runs
+once with ASR available and once without.
 
 ---
 
@@ -187,6 +336,13 @@ local OpenSubtitles-derived index (ADR 0004) and do not cross the process bounda
   sidecar that is down must not degrade into whitespace tokenization.
 - ADR 0001 records German lemmatization as this stack's weak point. Swapping German to
   Stanza inside the same sidecar is a version bump, not a contract change.
+
+<!-- ADDED: ADR 0016 -->
+The sidecar also serves `POST /transcribe` (§1a). Same process for the same reason — Python
+only where the models are — but with one property the annotation endpoints do not have: an
+ASR call holds the process for minutes, while `annotate` is called per sentence. Once
+extraction runs concurrently with ingestion, transcription needs its own process or the
+endpoint needs a queue. ADR 0016 records this as the condition that reverses the placement.
 
 ---
 

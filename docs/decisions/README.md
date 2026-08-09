@@ -35,11 +35,24 @@ Never delete an ADR. The value is in the record of what was considered.
 | [0010](0010-multilanguage-forward-compat.md) | Multi-language: two hooks now, laddering deferred | | Accepted |
 | [0011](0011-mwe-unithood-and-idiomaticity.md) | MWE unithood and idiomaticity as separate scores | Two scores, contiguous base generator | Accepted |
 | [0012](0012-database-layer.md) | Database access layer | Drizzle over `better-sqlite3`; migrations hand-authored, never generated | Accepted |
+| [0013](0013-reuse-from-bilingual-audio-generator.md) | Reuse from `bilingual-audio-generator` | Take sentence-boundary fusion + LLM index prompts | Accepted; amended by 0017 |
+| [0014](0014-parse-warning-vocabulary.md) | The parse-warning vocabulary, and where it lives | Eighth kind `subtitle_boilerplate`; list moves to `packages/core` | Accepted |
+| [0015](0015-local-media-scope.md) | What P80 ingests | **Local `.mp4` by reference only**; `youtube_embedded` removed, hard media rules rewritten | Accepted |
+| [0016](0016-asr-transcription.md) | Where transcripts come from | Local ASR primary, user upload fallback; both in `services/nlp` | Accepted |
+| [0017](0017-word-level-timing.md) | Transcript timing granularity | Word array is the source of truth; two declared tiers | Accepted |
+| [0018](0018-media-file-identity.md) | What identifies a media file | Content hash is identity, path is a repairable locator | Accepted |
 
-**All 12 ADRs are accepted as of 2026-08-07.** Two questions inside ADR 0011 remain open by
-design; both resolve by measurement at Stage 8.
+**All 18 ADRs are accepted as of 2026-08-08.** Two questions inside ADR 0011 remain open by
+design and resolve by measurement at Stage 8; one inside ADR 0016 resolves at the close of
+Stage 2.
+
+**0015 is the largest revision so far.** It replaces the media source, which reaches ADR
+0007's playback assumptions and ADR 0013's timing constraints. Neither is superseded
+outright — 0007's two-client split stands on reasoning that never depended on YouTube, and
+0013's borrowed fusion survives with one of its four adaptations withdrawn by 0017. The
+files stay as written; the amendments are recorded in the ADRs that make them.
 
 One decision is deliberately deferred rather than made: the **TUI framework**. ADR 0007
 requires the client but names no stack, and the surface that decides it is the candidate
-inbox in Stage 5. Stage 1 ships a framework-free CLI; ADR 0013 gets written when there is
-a real screen to choose against.
+inbox in Stage 5. Stage 1 ships a framework-free CLI; the ADR gets written when there is a
+real screen to choose against, and takes whatever number is next by then.

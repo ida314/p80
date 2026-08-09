@@ -1,5 +1,9 @@
-import type { JobRecord, JobType, Logger } from '@p80/core';
+import type { Config, JobRecord, JobType, Logger } from '@p80/core';
 import type { DatabaseHandle } from '@p80/database';
+import { createAsrProvider } from '@p80/providers';
+import { createIngestMediaHandler } from './handlers/ingest-media.js';
+import { createParseTranscriptHandler } from './handlers/parse-transcript.js';
+import { createTranscribeHandler } from './handlers/transcribe.js';
 
 export interface JobContext {
   handle: DatabaseHandle;
@@ -45,15 +49,35 @@ export class JobRegistry implements JobHandlerSource {
 }
 
 /**
- * The Stage 1 registry: one handler that does nothing.
+ * `NOOP` — does nothing, deliberately.
  *
- * `NOOP` exists so exit criterion 4 — "worker can claim and complete a test job" — is a
- * test rather than a promise. Real handlers arrive with the stages that need them:
- * `PARSE_TRANSCRIPT` in Stage 2, the annotation chain in Stage 4.
+ * It exists so Stage 1's exit criterion 4, "worker can claim and complete a test job", is
+ * a test rather than a promise. It stays because `scripts/smoke.sh` and `pnpm dev:noop`
+ * still use it to prove the claim loop is alive without needing real work to do.
  */
-export function createStage1Registry(): JobRegistry {
+export function createNoopRegistry(): JobRegistry {
   return new JobRegistry().register('NOOP', async ({ job }) => ({
     noop: true,
     jobId: job.id,
   }));
+}
+
+/**
+ * The registry the worker actually runs.
+ *
+ * `registry.types()` is what the claim loop filters on, so a job type with no handler here
+ * is never claimed — it sits `pending` rather than being claimed and failed. That is why
+ * the annotation chain's seventeen types can exist in `JOB_TYPES` from Stage 1 without the
+ * worker choking on one.
+ */
+export function createRegistry(deps: { config: Config }): JobRegistry {
+  // Constructed, not dialled. Building the client opens no socket, so a sidecar that is
+  // down stays an ordinary runtime state rather than a startup failure — the same rule
+  // §5.2 sets for the LLM provider, and the reason nothing here checks for a provider.
+  const asr = createAsrProvider(deps.config.P80_NLP_BASE_URL);
+
+  return createNoopRegistry()
+    .register('INGEST_MEDIA', createIngestMediaHandler({ config: deps.config }))
+    .register('TRANSCRIBE', createTranscribeHandler({ config: deps.config, asr }))
+    .register('PARSE_TRANSCRIPT', createParseTranscriptHandler({ config: deps.config }));
 }

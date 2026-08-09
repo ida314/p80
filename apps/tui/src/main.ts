@@ -136,7 +136,7 @@ function usage(): number {
       '  profile   show the current profile',
       '',
       'Media surfaces — review sessions, the video loop, video detail — are in the',
-      'browser client, because playback needs the YouTube IFrame player (ADR 0007).',
+      'browser client, because playback needs a video surface (ADR 0007).',
       '',
     ].join('\n'),
   );

@@ -17,6 +17,9 @@ const CONTRACTED_TABLES = [
   'video_interests',
   'transcript_files',
   'transcript_segments',
+  // ADR 0017, migration 0002. The word array is the source of truth where a transcript
+  // has one; segments are index ranges over it.
+  'transcript_words',
   'sentences',
   'sentence_segments',
   'tokens',
@@ -82,11 +85,11 @@ describe('migrations', () => {
   it('is a no-op on re-run', () => {
     temp = createTempDatabase({ migrate: false });
     const first = migrate(temp.sqlite);
-    expect(first.applied).toEqual(['0001_initial.sql']);
+    expect(first.applied).toEqual(['0001_initial.sql', '0002_local_media.sql']);
 
     const second = migrate(temp.sqlite);
     expect(second.applied).toEqual([]);
-    expect(second.alreadyApplied).toEqual(['0001_initial.sql']);
+    expect(second.alreadyApplied).toEqual(['0001_initial.sql', '0002_local_media.sql']);
   });
 
   it('enforces foreign keys, so the cascade rules are not decorative', () => {

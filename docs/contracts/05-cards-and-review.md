@@ -48,9 +48,15 @@ multiplication and the cross-lingual sense-alignment problem.
 
 **Objective:** recognize the item in continuous speech.
 
-- **Front:** miniature embedded player, playback beginning shortly before the item,
-  transcript hidden. The video image may remain visible — hiding it is not permitted to
-  break embedded playback compliance.
+- **Front:** miniature player, playback beginning shortly before the item, transcript
+  hidden. The video image may remain visible; hiding it is a user preference.
+  <!-- RESOLVED (ADR 0015): the spec forbade hiding the image because obscuring an embedded
+       player breaks its terms. P80 plays a local file the user holds, so the constraint has
+       no subject and the choice returns to the user. -->
+- **Clip boundaries are exact** where the transcript has word-level timing (ADR 0017), and
+  cue-bounded where it does not. The difference is visible to the user rather than silently
+  absorbed — a replay that covers a whole line when it was asked for a word is a worse
+  answer, not a rounder one.
 - **Prompt:** "What does the speaker mean?"
 - **Response:** typed meaning optional; a mental answer is permitted; reveal button.
 - **Back:** transcript, highlighted item, short meaning, natural translation, wider
@@ -241,12 +247,13 @@ C      expand context
 ```
 
 Also required: screen-reader labels, transcript resizing, adjustable pre-roll, adjustable
-playback speed through permitted player controls, reduced-motion mode, high contrast.
+playback speed, reduced-motion mode, high contrast.
 
 ## 12. Which client hosts what (ADR 0007)
 
 **Review sessions and the video loop are browser surfaces.** Audio/source-clip recognition
-requires the YouTube IFrame Player API, which cannot run in a terminal.
+needs a video surface, and a terminal has none. ADR 0015 changed the player and not this
+conclusion — the reasoning never depended on which player it was.
 
 Contextual cloze and productive recall are renderable as text, but §30.2 schedules them in
 the same session as audio-recognition cards. Splitting them across clients would force a

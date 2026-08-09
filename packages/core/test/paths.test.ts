@@ -16,7 +16,7 @@ import { findRepoRoot, resolveFromRepoRoot } from '../src/paths.js';
  */
 describe('path resolution', () => {
   it('resolves the database path identically from any package directory', () => {
-    const fromRoot = loadConfig({}).P80_DB_PATH;
+    const fromRoot = loadConfig({ P80_MEDIA_ROOT: '/media/library' }).P80_DB_PATH;
     const fromApi = resolveFromRepoRoot('./data/p80.db', join(process.cwd(), 'apps/api'));
     const fromWorker = resolveFromRepoRoot(
       './data/p80.db',
@@ -29,7 +29,7 @@ describe('path resolution', () => {
   });
 
   it('leaves an absolute path alone', () => {
-    const config = loadConfig({ P80_DB_PATH: '/var/lib/p80/custom.db' });
+    const config = loadConfig({ P80_DB_PATH: '/var/lib/p80/custom.db', P80_MEDIA_ROOT: '/media/library' });
     expect(config.P80_DB_PATH).toBe('/var/lib/p80/custom.db');
   });
 

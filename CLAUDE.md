@@ -5,7 +5,7 @@ videos plus user-supplied transcripts into a small, high-value curriculum of wor
 multiword expressions, and constructions, then trains recognition, production, and
 contextual transfer while reconnecting each item to its original source clip.
 
-Read this file first. Then read `docs/STATUS.md` to find out where the project is.
+Read this file first. Then read `docs/internal/STATUS.md` to find out where the project is.
 
 ---
 
@@ -13,11 +13,15 @@ Read this file first. Then read `docs/STATUS.md` to find out where the project i
 
 | Need | Read |
 |---|---|
-| Where the project is right now | `docs/STATUS.md` |
-| What to build in the current stage | `docs/plan/stage-NN-*.md` |
+| Where the project is right now | `docs/internal/STATUS.md` |
+| What to build in the current stage | `docs/internal/plan/stage-NN-*.md` |
 | Data shapes, schema, endpoints, interfaces, formulas | `docs/contracts/` — **authoritative** |
 | Why a decision was made | `docs/decisions/` |
+| The stages and their ordering | `docs/roadmap.md` |
 | Original product intent and rationale | `docs/original_spec.md` — **frozen, never edit** |
+
+Everything here except `docs/internal/**` is written for a stranger — see **hard rule 19**.
+Decide a document's audience before its filename.
 
 **Before writing code that touches a data shape, an endpoint, a provider, or a formula,
 read the relevant file in `docs/contracts/`.** They are the specification; the original
@@ -34,19 +38,28 @@ ADR.
 These come from product policy and legal constraints, not preference. Violating one is a
 defect regardless of how well it works.
 
-### Media (spec §8, §38.8)
-1. **Never download YouTube video or audio.** No `yt-dlp`, no stream extraction, no media
-   proxying. If a task seems to require it, the task is wrong — stop and ask.
-2. **Never isolate or store an audio track.**
-3. **Never scrape public captions.** Transcripts are user-supplied in MVP.
-4. Playback is exclusively through the YouTube IFrame Player API.
-5. Never claim frame-accurate playback in UI copy — the player starts near a keyframe.
+### Media (ADR 0015 — replaces spec §8, §38.8)
+1. **P80 never acquires media.** No downloader, no stream extraction, no URL that resolves
+   to media bytes. How a file arrived on disk is outside the system. If a task seems to
+   require obtaining media, the task is wrong — stop and ask.
+2. **P80 makes no outbound request to obtain a transcript.** ASR is local (ADR 0016);
+   upload is user-supplied. Neither path leaves the machine.
+3. **P80 never copies media into its own storage.** It holds a reference — a path plus a
+   content hash — and reads through it. `P80_STORAGE_PATH` holds transcripts and derived
+   artifacts, never media.
+4. **A media path is untrusted input.** It resolves under `P80_MEDIA_ROOT` or it is
+   rejected. Never sanitised into something acceptable.
 
-Rules 1–4 constrain the **YouTube adapter**, which is MVP's only media path. They are not a
-statement that P80 is a YouTube product: the domain unit is a timed media source plus a
-transcript — an `.mp4` or equivalent — and everything YouTube-specific stays behind
-`MediaSourceAdapter`, so local files and other providers remain new adapters rather than a
-refactor. See `docs/contracts/04-providers.md` §1, *Provider independence*.
+The domain unit is a timed media source plus a transcript — an `.mp4` or equivalent — and
+everything file-specific stays behind `MediaSourceAdapter`. That interface earned its keep
+once already: ADR 0015 removed the YouTube adapter by deleting it rather than by refactoring
+around it. See `docs/contracts/04-providers.md` §1, *Provider independence*.
+
+**Two former rules are deleted, deliberately.** *Never isolate or store an audio track* had
+no subject left once the user supplies the file — decoding its audio is the whole of what
+ASR does, and rule 3 is what now protects the storage directory. *Never claim frame-accurate
+playback* went with the keyframe-bounded player; seeking a local file is exact. ADR 0015
+records what each deletion costs. Do not reintroduce either as a hedge.
 
 ### Human control (spec §7.3)
 6. **No candidate ever becomes a learning item without an explicit user action.** There is
@@ -72,9 +85,11 @@ refactor. See `docs/contracts/04-providers.md` §1, *Provider independence*.
     wrong — stop and ask. `.env.local` holds local endpoint config only, which is not a
     secret. Should this ever be revisited, the rule reverts to: keys from `.env.local`
     only, never the database, a response body, a log line, or an error message.
-15. No remote analytics. Every external request is identifiable and disclosed — and the
-    steady-state list is **empty**. P80 makes no outbound requests at runtime; the
-    dictionary, frequency, and model artifacts are downloaded once during setup.
+15. No remote analytics. **P80 makes no outbound request at runtime — the list is empty.**
+    Not the API, not the worker, not the NLP sidecar, and since ADR 0015 removed the
+    embedded player, not the browser client either. The dictionary, frequency, ASR, and
+    spaCy artifacts are downloaded once during setup. Adding a runtime request is a
+    decision, not an implementation detail, and it would be the first one.
 16. Recordings are not persisted unless the user explicitly saves them.
 
 ### Scope (spec §6)
@@ -87,6 +102,43 @@ refactor. See `docs/contracts/04-providers.md` §1, *Provider independence*.
     `if (language === ...)` outside an adapter. The registry is the *only* concession to
     the eventual Portuguese/Spanish/French ambition — a profile switcher, a second adapter,
     or a second evaluation corpus is rule 17 territory.
+
+### Documentation audience
+19. **Every document except `docs/internal/**` is written for a stranger.** Assume anyone —
+    a user, another developer, a reviewer — reads `README.md`, `CLAUDE.md`,
+    `docs/contracts/`, `docs/decisions/`, `docs/roadmap.md`, and `docs/SETUP.md`. Keep them
+    free of anything personal to whoever is building this: no names of real people, no
+    home-directory or machine-local paths, no specific personal hardware, no email
+    addresses, no first-person working narrative.
+
+    - Name sibling repositories **without paths**. If one is private, say so and make the
+      document stand on its own without it.
+    - Real names used as linguistic or data examples count. Substitute a neutral one.
+    - Where a personal detail is load-bearing, **abstract it into the property that
+      mattered** rather than deleting it. *"A 128 GB unified-memory workstation,
+      bandwidth-constrained rather than capacity-constrained"* explains a decision; a brand
+      name does not. A redaction leaves a hole where an explanation should be.
+
+    `docs/internal/` holds the working notes — status and stage briefs — and is where local
+    paths and concrete personal context belong. Being concrete there is the point; do not
+    sanitise it.
+
+    **Do not document this rule outside this file.** It is guidance for you, not a policy
+    to announce. Reader-facing docs should simply *be* clean, with no page explaining that
+    a distinction exists or that anything is curated. `docs/README.md` frames the same
+    constraints as ordinary portability hygiene, which is how they should read; do not add
+    "public vs internal" framing to it, to the internal files, or to commit messages.
+
+    Two directions of drift to watch:
+
+    - **Progress leaking into a public doc.** ADRs record a decision and its reasoning, not
+      status. Status goes to `docs/internal/STATUS.md`.
+    - **Rationale stuck in an internal doc.** If you are writing *why* rather than *where*,
+      it belongs in an ADR — public, and written to stand alone.
+
+    `test/docs-hygiene.test.ts` under `pnpm test` catches the mechanically detectable cases
+    across the reference documentation set. It is a backstop, not the rule; it cannot see
+    first-person narrative or a judgement call about hardware.
 
 ---
 
@@ -124,7 +176,7 @@ refactor. See `docs/contracts/04-providers.md` §1, *Provider independence*.
 
 ## 4. Stack
 
-All eleven ADRs in `docs/decisions/` are accepted. The stack below is settled, not
+All eighteen ADRs in `docs/decisions/` are accepted. The stack below is settled, not
 provisional — check there for *why* before changing any of it.
 
 Two clients over one API, split by whether the surface needs media (ADR 0007):
@@ -133,12 +185,14 @@ Two clients over one API, split by whether the surface needs media (ADR 0007):
 apps/tui      management surfaces — candidate inbox, items, stats,
               diagnostics, jobs, settings. Keyboard-only, no media.
 apps/web      media surfaces — review sessions, video loop, video detail.
-              React + TypeScript + Vite, YouTube IFrame API, MediaRecorder.
-apps/api      Node + TypeScript + Fastify + Zod
+              React + TypeScript + Vite, HTML5 <video>, MediaRecorder.
+apps/api      Node + TypeScript + Fastify + Zod. Serves media by byte range
+              from P80_MEDIA_ROOT; copies nothing (ADR 0015).
 apps/worker   Node + TypeScript, SQLite-backed job polling
-services/nlp  Python + FastAPI + spaCy de_core_news_lg (ADR 0002).
-              Stateless, loopback only, one narrow HTTP interface
-              matching LanguageAdapter.annotate.
+services/nlp  Python + FastAPI. spaCy de_core_news_lg (ADR 0002) and
+              faster-whisper + forced alignment (ADR 0016). Loopback only.
+              Stateless per request, but ASR holds it for minutes — see
+              04-providers.md §2 for the condition that splits it out.
 packages/core             domain logic, scoring, pipeline stages
 packages/database         schema + migrations
 packages/language-adapters
@@ -157,28 +211,34 @@ expensive to start:
 
 - **vLLM** serving the local model on loopback, OpenAI-compatible (ADR 0005). Expect it to
   be *down* during Stages 1–6 — that is the §5.2 degraded path getting free exercise.
-- **`uselimit`** (`~/Projects/uselimit`, workspace link until published) enforces the
-  enrichment ceilings. Needs a transactional SQLite `StorageAdapter`, to be written
-  upstream; the shipped `InMemoryAdapter` is single-process and will not do, since the API
-  and worker both consume budget.
+- **`uselimit`** enforces the enrichment ceilings. Not yet on npm, so it is consumed as a
+  workspace link against a local sibling checkout until it is published. Needs a
+  transactional SQLite `StorageAdapter`, to be written upstream; the shipped
+  `InMemoryAdapter` is single-process and will not do, since the API and worker both
+  consume budget.
 
-**Setup is not `pnpm install`.** It also downloads the spaCy model, two Wiktextract dumps,
-and the OpenSubtitles corpus, then builds the dictionary index and the frequency counts.
-Document every step — this is a real cost paid by every future contributor, agent sessions
-included.
+**Setup is not `pnpm install`.** It also needs `ffmpeg` on the path, and it downloads the
+spaCy model, the ASR and forced-alignment models (ADR 0016), two Wiktextract dumps, and the
+OpenSubtitles corpus, then builds the dictionary index and the frequency counts. Document
+every step — this is a real cost paid by every future contributor, agent sessions included.
+
+`P80_MEDIA_ROOT` must point at a directory of media files before anything can be ingested.
+It is the only place P80 will read media from, and it has no default: a wrong guess would be
+a silent one.
 
 ---
 
 ## 5. Working agreement
 
 1. **Work one stage at a time.** The stage brief defines scope. Work outside it — even
-   obviously useful work — needs a note in `STATUS.md` or a new stage.
+   obviously useful work — needs a note in `docs/internal/STATUS.md` or a new stage.
 2. **A stage is done when its exit criteria pass as tests**, not when it feels done.
    Convert each exit criterion into a test or an explicit manual-check line.
-3. **Update `docs/STATUS.md` at the end of a work session.** Current stage, what landed,
-   what is blocked, next actions.
+3. **Update `docs/internal/STATUS.md` at the end of a work session.** Current stage, what landed,
+   what is blocked, next actions. *Where*, not *why* — see rule 19.
 4. **Write an ADR for any decision** that changes an interface, a table, a formula, or a
-   dependency. Cheap file, saves re-litigation.
+   dependency. Cheap file, saves re-litigation. Written for a stranger (rule 19), so the
+   reasoning stands alone.
 5. **Fixtures before extraction logic.** Stages 4–8 are tuned against the labelled
    evaluation transcript. Do not tune extraction on anecdotes (spec §34.5).
 6. If the spec is ambiguous, do not guess silently. Resolve it in the contract with a

@@ -17,7 +17,23 @@ dependencies = [
     # Stage 4 adds:
     #   "spacy>=3.8",
     #   de_core_news_lg, installed from its release URL (not on PyPI)
-    # Deliberately absent in Stage 1 — see README.
+    # Deliberately absent — see README.
+]
+
+[project.optional-dependencies]
+# ADR 0016. An extra rather than a hard dependency, because it drags in torch and
+# CTranslate2 — gigabytes, and platform-specific in a way that would make `uv sync` fail
+# for anyone who only wants to run the tests. `/transcribe` reports 501 when it is absent,
+# which is the designed state, not a broken install.
+asr = [
+    "faster-whisper>=1.1",
+]
+# Forced alignment refines Whisper's own word timings. Separate again, and separately
+# optional: when it is missing the endpoint still transcribes, records
+# `alignment_model_id: null`, and raises a warning saying the timings are less precise.
+# Reporting the difference is what keeps it from being a silent downgrade.
+align = [
+    "whisperx>=3.1",
 ]
 
 [dependency-groups]

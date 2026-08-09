@@ -7,6 +7,12 @@
  * Using the spec's older list here would reintroduce the filter-first ordering.
  */
 export const JOB_TYPES = [
+  /** ADR 0015/0018. Hash the file, read its duration, and hand off to TRANSCRIBE. Split
+   *  from `POST /api/videos` because reading a multi-gigabyte file is seconds, and seconds
+   *  do not belong on a request that is supposed to return a job reference. */
+  'INGEST_MEDIA',
+  /** ADR 0016. Local ASR. The first job that takes minutes rather than milliseconds. */
+  'TRANSCRIBE',
   'PARSE_TRANSCRIPT',
   'RECONSTRUCT_SENTENCES',
   'ANNOTATE_TRANSCRIPT',

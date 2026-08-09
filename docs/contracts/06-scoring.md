@@ -495,7 +495,7 @@ alone. Same treatment as §2.7's LLM component.
 | *maschinelles Lernen* | high | high | unit |
 | *in der* | **low** | high | free syntactic combination |
 | *Fliegen mit einer Klappe* | high | **low** — always preceded by *zwei* | fragment |
-| *Dylan hat den Burger gegessen* | **low** | **low**, `c ≈ 0` | not a unit; unmeasured |
+| *Anna hat den Burger gegessen* | **low** | **low**, `c ≈ 0` | not a unit; unmeasured |
 
 The two signals are complementary and neither alone separates all four rows.
 

@@ -62,7 +62,7 @@ Cohesion and completeness are complementary and neither alone suffices:
 - *of the* — high branching entropy on both edges, **low cohesion**. Killed by cohesion.
 - *birds with one stone* — high cohesion, but almost always preceded by *two*, so **left
   entropy ≈ 0**. Killed by completeness.
-- *Dylan ate the burger* — free syntactic combination, low cohesion, singleton. Killed by
+- *Anna ate the burger* — free syntactic combination, low cohesion, singleton. Killed by
   both, and by confidence.
 
 The completeness test is the substantive addition. Nothing in ADR 0009 or the contract

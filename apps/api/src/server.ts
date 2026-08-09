@@ -18,6 +18,9 @@ import { createFastify, type App } from './app.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerJobRoutes } from './routes/jobs.js';
 import { registerProfileRoutes } from './routes/profile.js';
+import { registerMediaRoutes } from './routes/media.js';
+import { registerTranscriptRoutes } from './routes/transcript.js';
+import { registerVideoRoutes } from './routes/videos.js';
 
 export interface ApiServer {
   app: App;
@@ -103,6 +106,10 @@ export async function buildServer(config: Config): Promise<ApiServer> {
   await registerHealthRoutes(app, { config, handle });
   await registerProfileRoutes(app, { handle });
   await registerJobRoutes(app, { handle });
+  // Both need `config` for `P80_STORAGE_PATH` — uploads are written to disk (spec §7.2).
+  await registerVideoRoutes(app, { handle, config });
+  await registerMediaRoutes(app, { handle, config });
+  await registerTranscriptRoutes(app, { handle, config });
 
   if (isLanExposed(config)) {
     // §32.5: LAN exposure is opt-in and warns first. It is not silently normal.

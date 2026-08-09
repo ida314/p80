@@ -261,7 +261,7 @@ into one boolean:
 | **Idiomaticity** | Is the meaning derivable from the parts? | Promotion — needs an enrichment resource | Language |
 
 They are independent. *warten auf* is a unit and not an idiom. *ins Gras beißen* is both.
-*Dylan hat den Burger gegessen* is neither. Collapsing them lets an idiom test admit
+*Anna hat den Burger gegessen* is neither. Collapsing them lets an idiom test admit
 something that was never a unit, and makes a perfectly good non-idiomatic unit look like a
 failed classification.
 

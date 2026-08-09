@@ -77,7 +77,7 @@ describe('health', () => {
     expect(res.json()).toMatchObject({
       status: 'ok',
       service: 'api',
-      database: { reachable: true, migrationsApplied: 1 },
+      database: { reachable: true, migrationsApplied: 2 },
       // Spec §5.2: no provider configured is a normal state, not a degraded one. During
       // Stages 1-6 vLLM is simply not running.
       inference: { mode: 'local', configured: false },

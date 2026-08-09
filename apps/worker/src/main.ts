@@ -1,7 +1,7 @@
 import { createLogger, loadConfig } from '@p80/core';
 import { migrate, openDatabase } from '@p80/database';
 import { createWorker } from './loop.js';
-import { createStage1Registry } from './registry.js';
+import { createRegistry } from './registry.js';
 
 const config = loadConfig();
 const logger = createLogger('worker', config.P80_LOG_LEVEL);
@@ -13,7 +13,7 @@ migrate(handle.sqlite, { logger });
 
 const worker = createWorker({
   handle,
-  registry: createStage1Registry(),
+  registry: createRegistry({ config }),
   logger,
 });
 

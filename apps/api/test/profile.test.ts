@@ -19,6 +19,9 @@ afterEach(() => {
 async function open() {
   const config = loadConfig({
     P80_DB_PATH: join(dir, 'p80.db'),
+    // Required, with no default (ADR 0015). Nothing in this file touches media; the value
+    // just has to exist for the config to load.
+    P80_MEDIA_ROOT: join(dir, 'media'),
     P80_LOG_LEVEL: 'silent',
   });
   return buildServer(config);

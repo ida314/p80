@@ -36,7 +36,11 @@ function runCli(): { stdout: string; stderr: string } {
   const chunks: { stdout: string; stderr: string } = { stdout: '', stderr: '' };
   chunks.stdout = execFileSync(TSX, [CLI], {
     encoding: 'utf8',
-    env: { ...process.env, P80_DB_PATH: temp.dir + '/p80.db' },
+    env: {
+          ...process.env,
+          P80_DB_PATH: temp.dir + '/p80.db',
+          P80_MEDIA_ROOT: temp.dir + '/media',
+        },
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: fileURLToPath(new URL('..', import.meta.url)),
   });
@@ -68,7 +72,11 @@ describe('dev:noop CLI streams', () => {
       ['-c', `"${TSX}" "${CLI}" 2>&1 >/dev/null`],
       {
         encoding: 'utf8',
-        env: { ...process.env, P80_DB_PATH: temp.dir + '/p80.db' },
+        env: {
+          ...process.env,
+          P80_DB_PATH: temp.dir + '/p80.db',
+          P80_MEDIA_ROOT: temp.dir + '/media',
+        },
       },
     );
 

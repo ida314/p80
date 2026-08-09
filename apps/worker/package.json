@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@p80/core": "workspace:*",
-    "@p80/database": "workspace:*"
+    "@p80/database": "workspace:*",
+    "@p80/providers": "workspace:*"
   }
 }

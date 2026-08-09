@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase, type DatabaseHandle } from '../src/client.js';
-import { migrate } from '../src/migrate.js';
+import { loadMigrations, migrate } from '../src/migrate.js';
 
 /**
  * The API and the worker both migrate on start, and under `pnpm dev` they start at the
@@ -41,23 +41,29 @@ describe('concurrent migration', () => {
     const first = migrate(api.sqlite);
     const second = migrate(worker.sqlite);
 
-    // One applied it; the other found the work already done and did not throw.
-    const appliedCounts = [first.applied.length, second.applied.length].sort();
-    expect(appliedCounts).toEqual([0, 1]);
+    // One applied every pending migration; the other found the work already done and did
+    // not throw. Asserted as "all or nothing" rather than a literal count, so adding a
+    // migration does not edit this test — the claim is about the lock, not about how many
+    // files exist.
+    const applied = [first.applied.length, second.applied.length].sort();
+    expect(applied[0]).toBe(0);
+    expect(applied[1]).toBe(loadMigrations().length);
 
-    // And the result is one coherent schema, not a half-built one.
+    // And the result is one coherent schema, not a half-built one. `migrate.test.ts` owns
+    // the exact table list; what matters here is that the loser's connection sees the
+    // whole schema rather than the winner's partial work.
     const tables = worker.sqlite
       .prepare(
         `SELECT COUNT(*) AS n FROM sqlite_master
           WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != '_migrations'`,
       )
       .get() as { n: number };
-    expect(tables.n).toBe(36);
+    expect(tables.n).toBe(37);
 
     const ledger = worker.sqlite
       .prepare('SELECT COUNT(*) AS n FROM _migrations')
       .get() as { n: number };
-    expect(ledger.n).toBe(1);
+    expect(ledger.n).toBe(loadMigrations().length);
   });
 
   it('shares one database between two connections', () => {

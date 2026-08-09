@@ -79,19 +79,58 @@ prior, and review data outranks it (§11.2).
 
 ```
 GET    /api/videos
-POST   /api/videos                     # url + title + interests; extracts video ID
+POST   /api/videos                     # path + title + interests; 202 + ingest jobId
 GET    /api/videos/:id
 PUT    /api/videos/:id
 DELETE /api/videos/:id
+GET    /api/videos/:id/media           # ADDED: byte-range media stream
+POST   /api/videos/:id/media/repair    # ADDED: re-point a moved file
 POST   /api/videos/:id/transcript      # upload VTT/SRT or paste timestamped text
 GET    /api/videos/:id/transcript
+GET    /api/videos/:id/transcript/words # ADDED: word-level timing, when the tier has it
 POST   /api/videos/:id/transcript/preview   # ADDED: parse without persisting
 PUT    /api/videos/:id/transcript/segments/:segmentId   # ADDED: correction
+DELETE /api/videos/:id/transcript      # ADDED: deletion and replacement
 POST   /api/videos/:id/process         # 202 + jobId
 POST   /api/videos/:id/recalculate     # 202 + jobId
 GET    /api/videos/:id/items
 GET    /api/videos/:id/recommendations
 ```
+
+<!-- RESOLVED (ADR 0015): the spec's `POST /api/videos` takes a URL and extracts a video ID.
+     There is no URL and no external ID. It takes a path relative to `P80_MEDIA_ROOT`. -->
+
+**`POST /api/videos` takes a path and returns `202 { video, jobId }`.** The body is
+`{ path, title?, speakerLabel?, regionLabel?, interests? }`. The path is validated
+structurally and for containment under `P80_MEDIA_ROOT`, and the file's existence is checked
+— but it is not read. Hashing and duration probing cost seconds on a large file and belong in
+the `INGEST_MEDIA` job, which the response's `jobId` refers to. That job computes the content
+hash (ADR 0018), fills in the duration, and enqueues `TRANSCRIBE` (ADR 0016).
+
+A path that escapes the root is `400 INVALID_MEDIA_PATH`. A path that does not exist is
+`404 MEDIA_FILE_NOT_FOUND`. Both name the offending path back to the caller, which is safe
+because the caller supplied it — but the message is the *relative* path, never the resolved
+absolute one, which would disclose the root's location to a client that has no business
+knowing it.
+
+**`GET /api/videos/:id/media` is the only route that reads media bytes.** It resolves
+`videos.media_path` under `P80_MEDIA_ROOT`, refuses anything outside, supports HTTP Range
+because `<video>` needs it to seek, and streams rather than buffering. A missing file is a
+`404 MEDIA_FILE_NOT_FOUND` and sets `videos.media_missing`; it is never a cached duplicate,
+because P80 copies no media (`04-providers.md` §1, rule 3).
+
+This route serves bytes rather than JSON, so it is the one exception to the error envelope
+in §1 for its success path. Errors still use the envelope.
+
+**`POST /api/videos/:id/media/repair`** takes `{ path }` and re-points a video whose file
+moved. It re-hashes and refuses a mismatch with `409 MEDIA_CONTENT_MISMATCH`, naming both
+hashes — accepting a different file would silently rebind a transcript to audio it does not
+match (ADR 0018 §3).
+
+**`GET /api/videos/:id/transcript/words`** returns the word array with per-word timing for a
+transcript at `timing_granularity = 'word'`, and `409 TRANSCRIPT_TIMING_UNAVAILABLE` for one
+at `'cue'`. A separate route rather than an expansion of the transcript response: a one-hour
+video is roughly 9,000 words, which no consumer of the segment list wants by default.
 
 `POST /api/videos/:id/transcript/preview` exists because §12.1 step 7 requires the user to
 preview parsed segments *before* confirming — which the spec's endpoint list has no way
@@ -100,6 +139,52 @@ to do. It returns parsed segments plus parse warnings and persists nothing.
 `PUT .../segments/:segmentId` writes a `transcript_corrections` row and updates the
 derived view; it never mutates the original `transcript_segments` row
 (see `02-database.md`).
+
+<!-- ADDED: not in original spec -->
+`DELETE /api/videos/:id/transcript` exists because spec §35 Stage 2 step 15 requires
+transcript deletion and replacement, which the endpoint list above has no other way to
+express. It returns `{ deletedSegments, deletedCorrections, deletedFiles, cancelledJobs }`.
+
+**Ingestion is asynchronous, and replacement is explicit.** Both resolve readings the spec
+left open:
+
+- `POST /api/videos/:id/transcript` writes the uploaded file to `P80_STORAGE_PATH`, records
+  it in `transcript_files`, sets `transcript_status = 'parsing'`, and returns
+  **`202 { jobId, status, transcriptFileId }`**. A `PARSE_TRANSCRIPT` job does the parsing.
+  This follows §1's rule that work starting a pipeline returns a job reference, §12.1 step 9
+  (*"ingestion job begins"*), and §7.2 (*"store uploaded transcript files locally"*). The
+  request body is JSON — `{ content, filename?, format?, replace }` — not multipart, which
+  removes a dependency and keeps an untrusted filename away from any code path that could
+  make it a file path. `format` is a hint; the content decides.
+- A second upload for a video that already has a transcript is **`409
+  TRANSCRIPT_ALREADY_EXISTS`** unless the body carries `replace: true`. Replacing discards
+  corrections, so the cost is stated before it is paid; the uploaded files themselves stay
+  on disk, which keeps the source recoverable. An identical checksum is
+  `409 TRANSCRIPT_DUPLICATE_UPLOAD` even under `replace` (§14.1, *duplicate upload*).
+- `POST .../transcript/preview` returns a **validation** failure inside a `200`, in
+  `validation.fatal`. Showing the user what is wrong before they commit is the endpoint's
+  entire purpose, and a 4xx would leave the preview screen with nothing to render. Only an
+  unrecognized *format* is a `400`, because then there is nothing to preview.
+- **No filesystem path appears in any response**, including `jobs.input_json` and
+  `jobs.output_json`, which `GET /api/jobs/:id` returns verbatim. Job payloads carry
+  `transcriptFileId`; the worker resolves the path itself.
+
+<!-- ADDED: not in original spec -->
+Stage 2 error codes, beyond the envelope example: `INVALID_MEDIA_PATH` (400, with
+`details.reason`), `MEDIA_FILE_NOT_FOUND` (404), `MEDIA_CONTENT_MISMATCH` (409, with both
+hashes), `UNSUPPORTED_MEDIA_SOURCE` (400), `DUPLICATE_VIDEO` (409, with the
+existing `videoId` so a client can navigate to it), `TRANSCRIPT_ALREADY_EXISTS` (409),
+`TRANSCRIPT_TIMING_UNAVAILABLE` (409), `ASR_UNAVAILABLE` (503, with the sidecar's reason),
+`TRANSCRIPT_DUPLICATE_UPLOAD` (409), `TRANSCRIPT_NOT_READY` (409),
+`TRANSCRIPT_HAS_CORRECTIONS` (409), `TRANSCRIPT_FORMAT_UNRECOGNIZED` (400),
+`TRANSCRIPT_TOO_LARGE` (413), `TRANSCRIPT_NO_SEGMENTS` (422),
+`TRANSCRIPT_INVALID_TIMESTAMPS` (422), `TRANSCRIPT_PARSE_FAILED` (422),
+`TRANSCRIPT_FILE_CORRUPT` (500, not retryable).
+
+Response shapes for this surface are defined once, as Zod schemas in
+`packages/core/src/api-types.ts`, and are imported by both the API's route schemas and the
+web client. The spec gives paths but no bodies; hand-mirroring them in the client drifts
+silently.
 
 ## 4. Candidates
 
