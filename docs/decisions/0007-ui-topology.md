@@ -29,7 +29,7 @@ Two clients over one API, split by whether the surface needs media:
 | Items library | **TUI** | Search and filter |
 | Stats / metrics | **TUI** | Read-only tables |
 | Diagnostics, jobs, provider calls | **TUI** | Operational |
-| Settings, profile, interests | **TUI** | Forms |
+| Settings, profile, interests | **TUI** | Forms — *amended by ADR 0019, see below* |
 | Review sessions | **Browser** | Audio recognition needs the IFrame player |
 | Video loop | **Browser** | Inherently visual (§21) |
 | Video detail / transcript sync | **Browser** | Playback-linked |
@@ -57,6 +57,16 @@ than either pure option.
 - Reversible. If the browser review flow proves annoying, a degraded link-out TUI review
   mode (`https://youtu.be/ID?t=102`) can be added later without backend changes — at the
   cost of §19.1's interval stop, replay, and answer-reveal structure.
+
+## Amendments
+
+**ADR 0019 puts settings in both clients.** The rule above sorts a surface by whether it
+needs media, and settings does not, so it landed in the terminal. The exception 0019 makes
+is narrow and specific: the media root decides whether the media surfaces work at all, and
+a browser client that renders a library of unplayable videos while the control that repairs
+them lives in a different application is a worse split than the one this ADR was avoiding.
+Everything else in the management column stays where it is, on the reasoning above, which
+0019 does not touch.
 
 ## Notes
 

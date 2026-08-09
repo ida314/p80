@@ -75,6 +75,60 @@ Writes `placement_results`, then `known_frequency_bands`. Never overwrites an ex
 `known_lexicon` row whose source is `user_marked` or `review_derived` — placement is a
 prior, and review data outranks it (§11.2).
 
+## 2a. Settings <!-- ADDED (ADR 0019) -->
+
+```
+GET    /api/settings
+PUT    /api/settings
+POST   /api/settings/media-root/preflight
+```
+
+Not in spec §29, which has no settings surface. ADR 0019 adds one because two settings —
+the media root and the ASR options — are changed often enough that a dotfile edit plus four
+process restarts is the wrong shape for them.
+
+`GET /api/settings` returns **both tiers**. Each row carries `tier` (`live` | `boot`),
+`value`, `source` (`environment` | `database`), `environmentValue`, `editable`,
+`description`, and `control`. Boot-tier rows are included rather than hidden: a settings
+page that omits the port it is served on is one the user will not trust, and the reason each
+is read-only is more useful shown than implied.
+
+`PUT /api/settings` takes `{ settings: Record<string, string | number | boolean>,
+acknowledgeOrphans?: boolean }`. A batch, because the ASR options are edited together. Every
+key is validated before any is written, so a request either fails before touching anything
+or applies everything it named. A boot-tier or unknown key is `400 SETTING_NOT_EDITABLE`
+with `details.reason` distinguishing the two — a read-only setting and a typo mean different
+things to whoever sent it.
+
+**`P80_ALLOW_LAN` and `P80_BIND_HOST` are not writable, and that is a security property
+rather than a restart problem.** §32.5 makes LAN exposure an opt-in act with a warning; a
+browser-reachable toggle would be a weaker guarantee than the one the spec asks for.
+
+**The media root gets three extra gates** (ADR 0019 §3–4), because it is the containment
+root that `04-providers.md` rule 4 assumes is trusted configuration:
+
+- It must be an absolute path to an existing readable directory, and it must not be the
+  filesystem root, a system directory, or inside `P80_STORAGE_PATH`. Otherwise
+  `400 INVALID_MEDIA_ROOT` with `details.reason`. The refusal list is not a security
+  boundary and is not claimed as one — loopback binding and strict CORS are.
+- A change that would leave any video unable to resolve its file is
+  `409 MEDIA_ROOT_WOULD_ORPHAN` unless the body carries `acknowledgeOrphans: true`.
+  `details` carries `videoCount`, `resolved`, `orphaned`, and a bounded `orphanedSample`.
+  Same shape as `TRANSCRIPT_ALREADY_EXISTS` requiring `replace: true`: the cost is counted,
+  stated, and then paid deliberately. Nothing is destroyed — setting the root back restores
+  playback exactly.
+- After a successful change, `videos.media_missing` is recomputed for every video, so the
+  library list is truthful immediately rather than one click at a time.
+
+`POST /api/settings/media-root/preflight` takes `{ path }` and returns the same counts
+without writing anything. Like `POST .../transcript/preview`, it reports a **rejection
+inside a `200`** — the field is still being typed, and a 4xx would leave the surface with
+nothing to render.
+
+Live-tier values are read at the point of use, per request and per job. No process caches
+one, which is what removes the window in which the API validates a path against one media
+root while the worker resolves it against another.
+
 ## 3. Videos
 
 ```
@@ -180,6 +234,10 @@ existing `videoId` so a client can navigate to it), `TRANSCRIPT_ALREADY_EXISTS` 
 `TRANSCRIPT_TOO_LARGE` (413), `TRANSCRIPT_NO_SEGMENTS` (422),
 `TRANSCRIPT_INVALID_TIMESTAMPS` (422), `TRANSCRIPT_PARSE_FAILED` (422),
 `TRANSCRIPT_FILE_CORRUPT` (500, not retryable).
+
+Stage 2b error codes (ADR 0019): `SETTING_NOT_EDITABLE` (400, with `details.reason` of
+`boot_tier` or `unknown_key`), `INVALID_MEDIA_ROOT` (400, with a `MediaRootRejection` in
+`details.reason`), `MEDIA_ROOT_WOULD_ORPHAN` (409, with the counts).
 
 Response shapes for this surface are defined once, as Zod schemas in
 `packages/core/src/api-types.ts`, and are imported by both the API's route schemas and the

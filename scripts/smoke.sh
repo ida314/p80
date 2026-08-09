@@ -195,6 +195,46 @@ check "no stream endpoint exists"    404 "$(status "${API}/api/videos/${video}/s
 check "no download endpoint exists"  404 "$(status "${API}/api/videos/${video}/download")"
 
 echo
+echo "settings"
+# ADR 0019. The `curl` path has to be complete here too — a surface only the web client can
+# reach would mean the API response is incomplete (ADR 0007).
+check "settings are readable"      200 "$(status "${API}/api/settings")"
+check "media root is editable"     live "$(curl -s "${API}/api/settings" \
+                                            | grep -o '"key":"P80_MEDIA_ROOT","tier":"[a-z]*"' \
+                                            | cut -d'"' -f8)"
+# Accepted-and-ignored is the failure mode this refusal exists to prevent.
+check "a boot key is refused"      400 "$(status -X PUT -H 'content-type: application/json' \
+                                            -d '{"settings":{"P80_API_PORT":9999}}' \
+                                            "${API}/api/settings")"
+check "LAN exposure is refused"    400 "$(status -X PUT -H 'content-type: application/json' \
+                                            -d '{"settings":{"P80_ALLOW_LAN":true}}' \
+                                            "${API}/api/settings")"
+check "an unknown key is refused"  400 "$(status -X PUT -H 'content-type: application/json' \
+                                            -d '{"settings":{"P80_NOPE":"x"}}' \
+                                            "${API}/api/settings")"
+check "/ is not a media root"      400 "$(status -X PUT -H 'content-type: application/json' \
+                                            -d '{"settings":{"P80_MEDIA_ROOT":"/"}}' \
+                                            "${API}/api/settings")"
+check "/etc is not a media root"   400 "$(status -X PUT -H 'content-type: application/json' \
+                                            -d '{"settings":{"P80_MEDIA_ROOT":"/etc"}}' \
+                                            "${API}/api/settings")"
+# Preflight reports a rejection inside a 200 — the field is still being typed.
+check "preflight rejects in a 200" 200 "$(status -X POST -H 'content-type: application/json' \
+                                            -d '{"path":"/etc"}' \
+                                            "${API}/api/settings/media-root/preflight")"
+check "and says why"     system_directory "$(curl -s -X POST -H 'content-type: application/json' \
+                                              -d '{"path":"/etc"}' \
+                                              "${API}/api/settings/media-root/preflight" \
+                                              | grep -o '"reason":"[^"]*"' | cut -d'"' -f4)"
+# An ASR option round-trips, and reports itself as overriding the environment.
+check "an ASR option is writable"  200 "$(status -X PUT -H 'content-type: application/json' \
+                                            -d '{"settings":{"P80_ASR_MODEL":"medium"}}' \
+                                            "${API}/api/settings")"
+check "and wins over .env.local" database "$(curl -s "${API}/api/settings" \
+                                              | grep -o '"key":"P80_ASR_MODEL"[^}]*"source":"[a-z]*"' \
+                                              | grep -o '"source":"[a-z]*"' | cut -d'"' -f4)"
+
+echo
 echo "origins"
 check "loopback origin allowed"    200 "$(status -H "Origin: http://127.0.0.1:${WEB_PORT}" \
                                             "${API}/api/health")"

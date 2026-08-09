@@ -2,7 +2,6 @@ import { eq } from 'drizzle-orm';
 import { newId, now } from '@p80/core';
 import type { DatabaseHandle } from '../client.js';
 import { profiles } from '../schema/profile.js';
-import { settings } from '../schema/ops.js';
 
 export interface Profile {
   id: string;
@@ -65,31 +64,5 @@ export function updateProfile(handle: DatabaseHandle, patch: ProfileUpdate): Pro
   return next;
 }
 
-/**
- * Key-value settings. API keys are never stored here (§32.3) — under ADR 0005 there are
- * none to store, and the prohibition stands so that a future cloud adapter cannot
- * quietly land one in a row.
- */
-export function getSetting<T = unknown>(
-  handle: DatabaseHandle,
-  key: string,
-): T | undefined {
-  const row = handle.db.select().from(settings).where(eq(settings.key, key)).all()[0];
-  return row ? (JSON.parse(row.valueJson) as T) : undefined;
-}
-
-export function setSetting(handle: DatabaseHandle, key: string, value: unknown): void {
-  handle.db
-    .insert(settings)
-    .values({ key, valueJson: JSON.stringify(value), updatedAt: now() })
-    .onConflictDoUpdate({
-      target: settings.key,
-      set: { valueJson: JSON.stringify(value), updatedAt: now() },
-    })
-    .run();
-}
-
-export function listSettings(handle: DatabaseHandle): Record<string, unknown> {
-  const rows = handle.db.select().from(settings).all();
-  return Object.fromEntries(rows.map((r) => [r.key, JSON.parse(r.valueJson)]));
-}
+// The key-value settings helpers moved to `repositories/settings.ts` when ADR 0019 gave
+// the table a job. `index.ts` re-exports both files, so nothing importing them changed.

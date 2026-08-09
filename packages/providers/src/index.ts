@@ -15,6 +15,7 @@
  */
 
 import type {
+  AsrOptions,
   MediaDescriptor,
   MediaPathRejection,
   MediaSourceKind,
@@ -130,6 +131,16 @@ export interface AsrRequest {
   mediaPath: string;
   /** Pinned from `profile.target_language`, never detected (ADR 0016 §3). */
   language: string;
+  /**
+   * Model, device, precision, and the two refusal thresholds — resolved from the settings
+   * surface per job (ADR 0019 §5).
+   *
+   * They travel with the request rather than living in the sidecar's environment, which is
+   * what makes them editable without restarting a Python process. Optional here so a test
+   * or a direct caller can omit them and let the sidecar fall back to its own defaults;
+   * the worker always sends them.
+   */
+  options?: AsrOptions;
 }
 
 export interface AsrResult {

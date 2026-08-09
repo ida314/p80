@@ -256,3 +256,64 @@ export const interestResponse = z.object({
   createdAt: z.number().int(),
 });
 export type InterestPayload = z.infer<typeof interestResponse>;
+
+/* --------------------------------------------------------------------- settings */
+/**
+ * ADR 0019. The settings surface is the one place a client renders configuration, and both
+ * clients render the same rows, so the row shape is defined here rather than twice.
+ *
+ * `value` and `environmentValue` are a union of the three primitive types a setting can
+ * have. They are not narrowed per key, because a client renders from `control` and does not
+ * branch on which setting it is looking at — that is what keeps the surface from acquiring
+ * knowledge of what a media root is.
+ */
+export const settingValueSchema = z.union([z.string(), z.number(), z.boolean()]);
+
+export const settingViewResponse = z.object({
+  key: z.string(),
+  tier: z.enum(['live', 'boot']),
+  value: settingValueSchema,
+  /** Which of the two sources the effective value came from. A stored row that no longer
+   *  matches `.env.local` reads as overridden rather than as ignored. */
+  source: z.enum(['environment', 'database']),
+  environmentValue: settingValueSchema,
+  editable: z.boolean(),
+  description: z.string(),
+  control: z.enum(['path', 'text', 'boolean', 'number', 'choice', 'readonly']),
+  choices: z.array(z.string()).optional(),
+  /** Present only when a stored row exists and cannot be parsed. The environment value is
+   *  in use; this says so rather than letting the row look effective. */
+  invalid: z.string().optional(),
+});
+export type SettingViewPayload = z.infer<typeof settingViewResponse>;
+
+export const settingsResponse = z.object({
+  settings: z.array(settingViewResponse),
+});
+export type SettingsPayload = z.infer<typeof settingsResponse>;
+
+/**
+ * What changing the media root would cost, counted before it is paid.
+ *
+ * `videos.media_path` is relative to the root (ADR 0015), so a new root makes every video
+ * resolve somewhere else. Nothing is destroyed and setting the root back restores
+ * everything — but that is a claim the user should be able to check against a number, which
+ * is what `orphaned` is. Same shape of decision as `replace: true` on a transcript upload.
+ */
+export const mediaRootPreflightResponse = z.object({
+  /** The normalised absolute path that would be stored, or null when it was rejected. */
+  path: z.string().nullable(),
+  valid: z.boolean(),
+  /** Machine-readable rejection reason, for a client that wants to style the field. */
+  reason: z.string().nullable(),
+  message: z.string().nullable(),
+  videoCount: z.number().int().nonnegative(),
+  /** Videos whose file is present under the proposed root. */
+  resolved: z.number().int().nonnegative(),
+  /** Videos whose file is not. These stop playing until the root changes back or the video
+   *  is re-pointed; their transcripts and everything built on them are unaffected. */
+  orphaned: z.number().int().nonnegative(),
+  /** A bounded sample, for a message that names videos rather than only counting them. */
+  orphanedSample: z.array(z.object({ id: z.string(), title: z.string() })),
+});
+export type MediaRootPreflightPayload = z.infer<typeof mediaRootPreflightResponse>;

@@ -20,6 +20,7 @@ import {
   enqueueJob,
   ensureProfile,
   findByMediaPath,
+  getRuntimeSettings,
   getVideo,
   listInterests,
   listVideos,
@@ -99,7 +100,9 @@ export async function registerVideoRoutes(
     async (request, reply) => {
       const profile = ensureProfile(handle);
 
-      const resolved = requireMediaPath(request.body.path, config.P80_MEDIA_ROOT);
+      // Read per request, not from `Config` — the media root is user-editable (ADR 0019).
+      const { mediaRoot } = getRuntimeSettings(handle, config);
+      const resolved = requireMediaPath(request.body.path, mediaRoot);
       requireExists(resolved.absolutePath, request.body.path);
 
       // The boring duplicate, caught before it costs anything. ADR 0018's content-hash

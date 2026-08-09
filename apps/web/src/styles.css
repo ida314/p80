@@ -5,6 +5,7 @@
   --muted: #9a9ab0;
   --accent: #7aa2f7;
   --error: #f7768e;
+  --warning: #e0af68;
   color-scheme: dark;
 }
 
@@ -16,6 +17,7 @@
     --muted: #5f6070;
     --accent: #2f5fd0;
     --error: #c0344f;
+    --warning: #9a6b12;
     color-scheme: light;
   }
 }
@@ -84,6 +86,17 @@ body {
 .panel--error pre {
   white-space: pre-wrap;
   color: var(--error);
+}
+
+/* A counted, reversible consequence — not a failure. Deliberately distinct from
+   `.panel--error`: changing the media root is something the user is being asked to
+   confirm, and colouring it as an error would read as "you did something wrong". */
+.panel--warning {
+  border-left: 3px solid var(--warning);
+}
+
+.hint--warning {
+  color: var(--warning);
 }
 
 h1 {
@@ -388,4 +401,107 @@ textarea {
 h2 {
   font-size: 1rem;
   margin: 1.25rem 0 0.5rem;
+}
+
+/* Settings — the boot tier, shown read-only (ADR 0019 §2). A settings page that omits the
+   port it is served on is one the user will not trust, so these are displayed rather than
+   hidden, each with the reason it takes a restart. */
+.settings__readonly {
+  margin: 0;
+}
+
+.settings__readonly > div {
+  padding: 0.6rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--muted) 20%, transparent);
+}
+
+.settings__readonly dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.settings__readonly dd {
+  margin: 0.25rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* Help on hover and on focus.
+   Seven editable settings and eleven read-only ones, each with a paragraph, buried the
+   values under their own documentation. The prose lives behind a marker instead.
+   `:focus-visible` is not decoration: a pointer-only tooltip is unreachable by keyboard,
+   and `.tip__mark` is a real button so that both routes work. */
+.tip {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.tip__mark {
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--muted) 55%, transparent);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1;
+  /* Not `help`. A button-shaped element is the only thing here that would change the
+     cursor, and the question-mark pointer reads as a state change rather than as a hint —
+     the marker already says what it is. */
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tip__mark:hover,
+.tip__mark:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.tip__body {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  z-index: 20;
+  /* Wide enough to read, narrow enough not to cover the field it describes. */
+  width: max-content;
+  max-width: 38ch;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 0.82rem;
+  font-weight: 400;
+  line-height: 1.45;
+  text-transform: none;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
+}
+
+.tip:hover .tip__body,
+.tip__mark:focus-visible + .tip__body {
+  display: block;
+}
+
+/* The label row: key, help marker, and state badge on one line. */
+.field__label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.field__label label {
+  cursor: pointer;
+}
+
+.settings__readonly dt {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }

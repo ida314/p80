@@ -11,7 +11,12 @@ import {
   videoAcceptedResponse,
   type Config,
 } from '@p80/core';
-import { enqueueJob, setMediaLocation, type DatabaseHandle } from '@p80/database';
+import {
+  enqueueJob,
+  getRuntimeSettings,
+  setMediaLocation,
+  type DatabaseHandle,
+} from '@p80/database';
 import type { App } from '../app.js';
 import { toVideoPayload } from '../services/video-payload.js';
 import { requireVideo } from './videos.js';
@@ -30,6 +35,10 @@ import { requireVideo } from './videos.js';
  * - **It streams.** Media files are gigabytes; nothing here buffers one.
  * - **It produces no copy** (rule 3). A missing file is a 404 that marks the video for
  *   repair, never a cached duplicate.
+ *
+ * The root itself is read per request rather than taken from `Config` (ADR 0019). It is
+ * user-editable now, and a value captured when the routes were registered would keep this
+ * route serving from the old library after the setting changed.
  *
  * This route sends bytes rather than JSON, which makes it the one exception to `03-api.md`
  * §1's envelope on the success path. Errors still use the envelope.
@@ -54,7 +63,8 @@ export async function registerMediaRoutes(
         );
       }
 
-      const absolutePath = assertInsideMediaRoot(video.mediaPath, config.P80_MEDIA_ROOT);
+      const { mediaRoot } = getRuntimeSettings(handle, config);
+      const absolutePath = assertInsideMediaRoot(video.mediaPath, mediaRoot);
 
       let size: number;
       try {
@@ -135,7 +145,8 @@ export async function registerMediaRoutes(
     },
     async (request, reply) => {
       const video = requireVideo(handle, request.params.id);
-      const resolved = requireMediaPath(request.body.path, config.P80_MEDIA_ROOT);
+      const { mediaRoot } = getRuntimeSettings(handle, config);
+      const resolved = requireMediaPath(request.body.path, mediaRoot);
       requireExists(resolved.absolutePath, request.body.path);
 
       const updated = setMediaLocation(handle, video.id, {

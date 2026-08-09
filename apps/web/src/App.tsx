@@ -8,20 +8,26 @@ import { AddVideo } from './pages/AddVideo.js';
 import { VideoDetail } from './pages/VideoDetail.js';
 import { VideoTranscript } from './pages/VideoTranscript.js';
 import { Review } from './pages/Review.js';
+import { Settings } from './pages/Settings.js';
 
 /**
- * **Media surfaces only** (ADR 0007).
+ * **Media surfaces, plus settings** (ADR 0007, amended by ADR 0019 §6).
  *
  * RESOLVED — divergence from spec §35's "Initial pages" list, which names Today, Videos,
  * Candidates, Items, Settings, and Diagnostics as web pages. That list predates ADR 0007,
  * which assigns the last four to the TUI: they are the highest-volume, keyboard-driven,
  * pure-text surfaces, and building them in React now would create pages to be deleted.
- * The browser keeps what needs a video surface and `MediaRecorder`.
+ *
+ * Settings is the one that came back, and only because the media root decides whether
+ * everything else here works: a library of unplayable videos with the repair control in
+ * another application is a worse split than the one ADR 0007 was avoiding. Candidates,
+ * Items, and Diagnostics stay in the TUI on the original reasoning.
  */
 const NAV = [
   { to: '/', label: 'Today', end: true },
   { to: '/videos', label: 'Videos' },
   { to: '/review', label: 'Review' },
+  { to: '/settings', label: 'Settings' },
 ];
 
 export function App() {
@@ -76,13 +82,14 @@ export function App() {
             <Route path="/videos/:id" element={<VideoDetail />} />
             <Route path="/videos/:id/transcript" element={<VideoTranscript />} />
             <Route path="/review" element={<Review />} />
+            <Route path="/settings" element={<Settings />} />
           </Routes>
         </ErrorBoundary>
       </main>
 
       <footer className="app__footer">
-        Management surfaces — candidates, items, settings, diagnostics — live in the TUI.
-        Run <code>pnpm --filter @p80/tui dev</code>.
+        Management surfaces — candidates, items, diagnostics — live in the TUI. Run{' '}
+        <code>pnpm --filter @p80/tui dev</code>.
       </footer>
     </div>
   );

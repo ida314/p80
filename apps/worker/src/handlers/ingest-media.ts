@@ -17,6 +17,7 @@ import {
   enqueueJob,
   ensureProfile,
   findByExternalId,
+  getRuntimeSettings,
   getVideo,
   isPendingIdentity,
   setMediaIdentity,
@@ -56,10 +57,12 @@ export function createIngestMediaHandler(deps: { config: Config }): JobHandler {
 
     // A hand-edited row cannot make the worker read outside the media root. The path was
     // validated on the way in; this is the read-side half of the same check.
-    const absolutePath = assertInsideMediaRoot(
-      video.mediaPath ?? '',
-      deps.config.P80_MEDIA_ROOT,
-    );
+    //
+    // Resolved per job rather than per process (ADR 0019). The root is user-editable, and
+    // a worker holding the value it booted with would resolve a path the API had just
+    // validated against a different root — the temporal form of ADR 0012's first bug.
+    const { mediaRoot } = getRuntimeSettings(ctx.handle, deps.config);
+    const absolutePath = assertInsideMediaRoot(video.mediaPath ?? '', mediaRoot);
 
     let bytes: number;
     try {

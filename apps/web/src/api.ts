@@ -15,6 +15,8 @@
 import type {
   InterestPayload,
   JobRecord,
+  MediaRootPreflightPayload,
+  SettingsPayload,
   SegmentPayload,
   TranscriptFormat,
   TranscriptPayload,
@@ -27,7 +29,10 @@ import type {
 export type {
   InterestPayload,
   JobRecord,
+  MediaRootPreflightPayload,
   ParseWarningPayload,
+  SettingViewPayload,
+  SettingsPayload,
   SegmentPayload,
   TranscriptFormat,
   TranscriptPayload,
@@ -229,3 +234,24 @@ export const listInterests = () => api<InterestPayload[]>('/api/interests');
 
 export const createInterest = (body: { name: string; weight?: number }) =>
   send<InterestPayload>('POST', '/api/interests', body);
+
+/* ------------------------------------------------------------- settings */
+/**
+ * ADR 0019. The page renders from `control` and `editable` and knows nothing about what
+ * any individual setting means — the registry, the validation, and the refusal all live
+ * behind the API, which is what keeps this client and the TUI from disagreeing.
+ */
+export const getSettings = () => api<SettingsPayload>('/api/settings');
+
+export const preflightMediaRoot = (path: string) =>
+  send<MediaRootPreflightPayload>('POST', '/api/settings/media-root/preflight', { path });
+
+/**
+ * `acknowledgeOrphans` confirms a counted, stated, reversible consequence — that some
+ * videos will stop resolving under the new media root. It is not a force flag, and the
+ * page only sends it after showing the number.
+ */
+export const updateSettings = (
+  settings: Record<string, string | number | boolean>,
+  acknowledgeOrphans = false,
+) => send<SettingsPayload>('PUT', '/api/settings', { settings, acknowledgeOrphans });

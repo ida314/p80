@@ -176,7 +176,7 @@ records what each deletion costs. Do not reintroduce either as a hedge.
 
 ## 4. Stack
 
-All eighteen ADRs in `docs/decisions/` are accepted. The stack below is settled, not
+All nineteen ADRs in `docs/decisions/` are accepted. The stack below is settled, not
 provisional — check there for *why* before changing any of it.
 
 Two clients over one API, split by whether the surface needs media (ADR 0007):
@@ -184,7 +184,9 @@ Two clients over one API, split by whether the surface needs media (ADR 0007):
 ```
 apps/tui      management surfaces — candidate inbox, items, stats,
               diagnostics, jobs, settings. Keyboard-only, no media.
-apps/web      media surfaces — review sessions, video loop, video detail.
+apps/web      media surfaces — review sessions, video loop, video detail —
+              plus settings, which ADR 0019 puts in both clients because the
+              media root decides whether the rest of this list works.
               React + TypeScript + Vite, HTML5 <video>, MediaRecorder.
 apps/api      Node + TypeScript + Fastify + Zod. Serves media by byte range
               from P80_MEDIA_ROOT; copies nothing (ADR 0015).
@@ -225,6 +227,13 @@ every step — this is a real cost paid by every future contributor, agent sessi
 `P80_MEDIA_ROOT` must point at a directory of media files before anything can be ingested.
 It is the only place P80 will read media from, and it has no default: a wrong guess would be
 a silent one.
+
+**It and the six `P80_ASR_*` options are editable while P80 runs** (ADR 0019). The
+`settings` table overrides the environment, both clients carry the surface, and every
+consumer reads a live key at the point of use — never from the `Config` snapshot. Reach for
+`getRuntimeSettings(handle, config)`; `config.P80_MEDIA_ROOT` compiles and is wrong. Nothing
+else is writable, and `P80_ALLOW_LAN` is deliberately not, because rule 13's opt-in should
+not be something a page can do.
 
 ---
 

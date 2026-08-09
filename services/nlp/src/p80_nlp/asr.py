@@ -105,15 +105,73 @@ class Settings:
 
     @staticmethod
     def from_env(env: dict[str, str] | None = None) -> Settings:
+        """The fallback, not the authority.
+
+        Since ADR 0019 the caller sends these options with each request, resolved from
+        P80's settings surface, so the sidecar holds no editable state of its own. These
+        defaults remain for direct callers and for the tests here, and
+        ``DEFAULTS`` below is asserted to match ``packages/core/src/config.ts``
+        field for field — two defaults that quietly disagreed would surface as a model
+        change nobody made.
+        """
         e = env if env is not None else dict(os.environ)
         return Settings(
-            model_id=e.get("P80_ASR_MODEL", "large-v3"),
-            device=e.get("P80_ASR_DEVICE", "cuda"),
-            compute_type=e.get("P80_ASR_COMPUTE_TYPE", "float16"),
-            require_gpu=e.get("P80_ASR_REQUIRE_GPU", "true").lower() in ("1", "true"),
-            align=e.get("P80_ASR_ALIGN", "true").lower() in ("1", "true"),
-            language_min_probability=float(e.get("P80_ASR_LANG_MIN_PROB", "0.5")),
+            model_id=e.get("P80_ASR_MODEL", DEFAULTS["model_id"]),
+            device=e.get("P80_ASR_DEVICE", DEFAULTS["device"]),
+            compute_type=e.get("P80_ASR_COMPUTE_TYPE", DEFAULTS["compute_type"]),
+            require_gpu=_flag(e, "P80_ASR_REQUIRE_GPU", DEFAULTS["require_gpu"]),
+            align=_flag(e, "P80_ASR_ALIGN", DEFAULTS["align"]),
+            language_min_probability=float(
+                e.get("P80_ASR_LANG_MIN_PROB", DEFAULTS["language_min_probability"])
+            ),
         )
+
+    def merged(self, overrides: dict[str, object] | None) -> Settings:
+        """Apply per-request overrides field by field.
+
+        **A field that is absent or ``None`` keeps this object's value.** That distinction
+        is the whole contract: the caller states only what it wants to change, and nothing
+        here has to guess whether a missing field means "default" or "unset". Unknown keys
+        are ignored rather than raising — the sidecar is one version boundary away from the
+        caller, and a field this build has not learned about yet is not a reason to refuse
+        a transcription.
+        """
+        if not overrides:
+            return self
+
+        def pick(name: str, current: object) -> object:
+            value = overrides.get(name)
+            return current if value is None else value
+
+        return Settings(
+            model_id=str(pick("model", self.model_id)),
+            device=str(pick("device", self.device)),
+            compute_type=str(pick("compute_type", self.compute_type)),
+            require_gpu=bool(pick("require_gpu", self.require_gpu)),
+            align=bool(pick("align", self.align)),
+            language_min_probability=float(
+                pick("language_min_probability", self.language_min_probability)  # type: ignore[arg-type]
+            ),
+        )
+
+
+# Mirrored in `packages/core/src/config.ts`'s `configSchema` and pinned by a test on each
+# side (ADR 0019 §5). Change one, change both.
+DEFAULTS: dict[str, object] = {
+    "model_id": "large-v3",
+    "device": "cuda",
+    "compute_type": "float16",
+    "require_gpu": True,
+    "align": True,
+    "language_min_probability": 0.5,
+}
+
+
+def _flag(env: dict[str, str], key: str, default: object) -> bool:
+    raw = env.get(key)
+    if raw is None:
+        return bool(default)
+    return raw.lower() in ("1", "true")
 
 
 def available(settings: Settings | None = None) -> bool:

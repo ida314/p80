@@ -41,8 +41,9 @@ Never delete an ADR. The value is in the record of what was considered.
 | [0016](0016-asr-transcription.md) | Where transcripts come from | Local ASR primary, user upload fallback; both in `services/nlp` | Accepted |
 | [0017](0017-word-level-timing.md) | Transcript timing granularity | Word array is the source of truth; two declared tiers | Accepted |
 | [0018](0018-media-file-identity.md) | What identifies a media file | Content hash is identity, path is a repairable locator | Accepted |
+| [0019](0019-runtime-settings.md) | Which configuration is editable while the system runs | `settings` table seeded by the environment; live vs boot tiers; settings surface in both clients | Accepted |
 
-**All 18 ADRs are accepted as of 2026-08-08.** Two questions inside ADR 0011 remain open by
+**All 19 ADRs are accepted as of 2026-08-09.** Two questions inside ADR 0011 remain open by
 design and resolve by measurement at Stage 8; one inside ADR 0016 resolves at the close of
 Stage 2.
 

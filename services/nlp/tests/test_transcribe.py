@@ -167,6 +167,125 @@ class TestWarningsNeverCarryTranscriptText:
         assert "1 words" in unaligned[0].message
 
 
+class TestRequestOptions:
+    """ADR 0019 §5 — the sidecar holds no editable settings of its own.
+
+    P80 sends model, device, precision, and the two refusal thresholds with each request,
+    resolved from its settings surface. This process keeps a default table only as a
+    fallback for direct callers, and it must agree with P80's.
+    """
+
+    def test_an_override_replaces_the_environment_value(self) -> None:
+        base = _settings(require_gpu=True, model_id="large-v3")
+        merged = base.merged({"require_gpu": False, "model": "medium"})
+
+        assert merged.require_gpu is False
+        assert merged.model_id == "medium"
+
+    def test_an_absent_field_keeps_the_current_value(self) -> None:
+        """The contract that lets a caller state only what it wants to change.
+
+        Without it, every partial request would have to be filled in by guessing whether a
+        missing field meant "default" or "unset" — and the two differ exactly when someone
+        has configured something.
+        """
+        base = _settings(device="cpu", compute_type="int8")
+        merged = base.merged({"model": "small"})
+
+        assert merged.device == "cpu"
+        assert merged.compute_type == "int8"
+        assert merged.model_id == "small"
+
+    def test_an_explicit_none_is_treated_as_absent(self) -> None:
+        # Pydantic fills every unset optional field with None, so this is the shape that
+        # actually arrives — not a hypothetical.
+        base = _settings(align=True)
+        assert base.merged({"align": None, "device": None}).align is True
+
+    def test_no_overrides_at_all_is_the_identity(self) -> None:
+        base = _settings()
+        assert base.merged(None) == base
+        assert base.merged({}) == base
+
+    def test_unknown_fields_are_ignored_rather_than_raising(self) -> None:
+        # One version boundary away from the caller. A field this build has not learned
+        # about is not a reason to refuse a transcription.
+        base = _settings()
+        assert base.merged({"beam_size": 8}) == base
+
+    def test_options_reach_the_settings_the_endpoint_uses(self, tmp_path) -> None:
+        """End to end through the route, without a model installed.
+
+        `require_gpu=False` disarms the device check, so the request gets far enough to
+        fail on the missing model — which is a 501, not the 503 the GPU refusal produces.
+        Distinguishing those two is how this asserts the override actually applied.
+        """
+        media = tmp_path / "clip.mp4"
+        media.write_bytes(b"not really an mp4")
+
+        response = client.post(
+            "/transcribe",
+            json={
+                "media_path": str(media),
+                "language": "de",
+                "options": {"require_gpu": False, "device": "cuda"},
+            },
+        )
+
+        assert response.status_code == 501
+        assert response.json()["error"]["code"] == "ASR_UNAVAILABLE"
+
+    def test_a_probability_outside_zero_to_one_is_rejected(self) -> None:
+        response = client.post(
+            "/transcribe",
+            json={
+                "media_path": "/nowhere.mp4",
+                "language": "de",
+                "options": {"language_min_probability": 5},
+            },
+        )
+        assert response.status_code == 422
+
+
+class TestDefaultParity:
+    """Stage 2b exit criterion 10 — the cross-language pin.
+
+    ``packages/core/src/config.ts`` is the authority since ADR 0019, and
+    ``packages/core/test/settings.test.ts`` asserts this same equality from the other side.
+    Two defaults that quietly disagreed would surface as a model change nobody made.
+    """
+
+    def test_the_table_matches_packages_core(self) -> None:
+        import re
+        from pathlib import Path
+
+        config = (
+            Path(__file__).resolve().parents[3] / "packages/core/src/config.ts"
+        ).read_text()
+
+        def default_of(key: str) -> str:
+            match = re.search(rf"{key}: .*?\.default\('?([^')]+)'?\)", config)
+            assert match is not None, f"{key} has no default in config.ts"
+            return match.group(1)
+
+        assert asr.DEFAULTS["model_id"] == default_of("P80_ASR_MODEL")
+        assert asr.DEFAULTS["device"] == default_of("P80_ASR_DEVICE")
+        assert asr.DEFAULTS["compute_type"] == default_of("P80_ASR_COMPUTE_TYPE")
+        assert asr.DEFAULTS["require_gpu"] is (default_of("P80_ASR_REQUIRE_GPU") == "true")
+        assert asr.DEFAULTS["align"] is (default_of("P80_ASR_ALIGN") == "true")
+        assert asr.DEFAULTS["language_min_probability"] == float(
+            default_of("P80_ASR_LANG_MIN_PROB")
+        )
+
+    def test_from_env_uses_that_table(self) -> None:
+        settings = asr.Settings.from_env({})
+        assert settings.model_id == asr.DEFAULTS["model_id"]
+        assert settings.require_gpu is asr.DEFAULTS["require_gpu"]
+        assert settings.language_min_probability == asr.DEFAULTS[
+            "language_min_probability"
+        ]
+
+
 def _segment(*, text: str, words: list, no_speech: float = 0.0, logprob: float = 0.0):
     return type(
         "Segment",

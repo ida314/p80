@@ -305,6 +305,47 @@ export function listVideos(
   };
 }
 
+export interface VideoMediaRef {
+  id: string;
+  title: string | null;
+  /** Relative to whichever media root is current. Null on a row never pointed at a file. */
+  mediaPath: string | null;
+  mediaMissing: boolean;
+}
+
+/**
+ * Every video's media reference, unpaged (ADR 0019 §4).
+ *
+ * Unpaged because both callers need the whole set to answer a question about it: how many
+ * videos a proposed media root would orphan, and which flags to recompute after it changed.
+ * A cursor would turn a count into a loop that can be interrupted halfway, leaving the
+ * `media_missing` column half-true — which is worse than the memory, since four columns
+ * across a personal library is nothing.
+ */
+export function listVideoMediaRefs(
+  handle: DatabaseHandle,
+  profileId: string,
+): VideoMediaRef[] {
+  const rows = handle.sqlite
+    .prepare(
+      `SELECT id, title, media_path, media_missing FROM videos
+        WHERE profile_id = ? ORDER BY created_at DESC, id DESC`,
+    )
+    .all(profileId) as Array<{
+    id: string;
+    title: string | null;
+    media_path: string | null;
+    media_missing: number;
+  }>;
+
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    mediaPath: r.media_path,
+    mediaMissing: r.media_missing === 1,
+  }));
+}
+
 export interface UpdateVideoInput {
   title?: string | null;
   speakerLabel?: string | null;

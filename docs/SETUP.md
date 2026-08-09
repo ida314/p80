@@ -78,6 +78,7 @@ uv python install 3.13
 | Command | Does |
 |---|---|
 | `pnpm dev` | Starts api, worker, web, and the NLP sidecar |
+| `pnpm --filter @p80/tui dev settings` | Show configuration, editable and read-only |
 | `pnpm test` | Vitest, unit + integration |
 | `pnpm typecheck` | `tsc --noEmit` across all nine TypeScript packages |
 | `pnpm db:migrate` | Applies pending migrations |
@@ -139,6 +140,11 @@ is reachable at all, and a default would silently make an empty directory your l
 P80_MEDIA_ROOT=/path/to/your/videos
 ```
 
+**After the first run you can change it without editing this file** — the Settings page in
+the browser client, or `pnpm --filter @p80/tui dev settings set P80_MEDIA_ROOT <path>`. See
+*Changing settings while P80 runs*, below. It still has to be set here once, because a
+process that cannot start does not serve a settings page.
+
 Videos are added by path relative to that root. P80 reads them where they are — it never
 copies, modifies, or deletes them, and deleting a video inside P80 leaves your file alone.
 A path that escapes the root is rejected rather than normalised.
@@ -157,7 +163,42 @@ Not yet needed. Recorded so the shape of the work is visible:
 - The OpenSubtitles-DE corpus, and a unigram + n-gram counting pass (ADR 0004)
 - A dictionary index build into a local SQLite FTS store
 
+## Changing settings while P80 runs (ADR 0019)
+
+Most configuration is read once at startup, and changing it means editing `.env.local` and
+restarting. Two groups are not: **the media library path and the transcription options**.
+Both are read at the point of use, so they can be changed from either client and take effect
+on the next request or the next job.
+
+```bash
+pnpm --filter @p80/tui dev settings                              # everything, both tiers
+pnpm --filter @p80/tui dev settings set P80_ASR_REQUIRE_GPU false
+pnpm --filter @p80/tui dev settings set P80_MEDIA_ROOT /mnt/videos
+```
+
+Or open <http://127.0.0.1:5173/settings>.
+
+A value set this way is stored in P80's own database and **wins over `.env.local`**, which
+both surfaces show: a setting that no longer matches your dotfile is marked as overridden,
+with the dotfile's value beside it.
+
+Everything else — ports, the bind host, the LAN flag, the database and storage paths, the
+log level — is displayed read-only. Those are consumed at startup, so a change here would do
+nothing, and P80 refuses the write rather than accepting one that has no effect. `P80_ALLOW_LAN`
+is deliberately in that group for a second reason: exposing P80 to your network should be an
+explicit act at the config file, not something a web page can do.
+
+**Changing the media root does not move, copy, or delete anything.** Videos are stored as
+paths relative to the root, so videos outside the new one stop playing until you change it
+back — their transcripts, corrections, and review history are untouched either way. Both
+surfaces count how many videos that affects and ask again before doing it.
+
 ## Configuration
+
+`.env.local` is read from the repository root when a process starts, and **anything already
+set in the environment wins over it** — so `P80_API_PORT=5280 pnpm dev` means what it looks
+like it means. The web client is the exception in mechanism only: Vite loads the same file
+itself.
 
 `.env.local` holds **local endpoint configuration only**. There are no API keys in P80
 (ADR 0005) — nothing here is a secret. The set of variables the application reads is

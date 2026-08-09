@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { backupDatabase } from '../src/backup.js';
 import { openDatabase } from '../src/client.js';
-import { setSetting } from '../src/repositories/profile.js';
+import { setSetting } from '../src/repositories/settings.js';
 import { createTempDatabase, type TempDatabase } from './helpers.js';
 
 /**

@@ -64,6 +64,23 @@ class AnnotateRequest(BaseModel):
     sentences: list[str]
 
 
+class TranscribeOptions(BaseModel):
+    """Per-request transcription settings (ADR 0019 §5).
+
+    Every field is optional and an absent one keeps the sidecar's own default, so a caller
+    states only what it wants to change. P80 itself always sends all six: the settings
+    surface resolves them from the database, which is what makes them editable without
+    restarting this process.
+    """
+
+    model: str | None = None
+    device: str | None = None
+    compute_type: str | None = None
+    require_gpu: bool | None = None
+    align: bool | None = None
+    language_min_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
 class TranscribeRequest(BaseModel):
     """The path arrives absolute and already contained under ``P80_MEDIA_ROOT`` by the
     caller (``CLAUDE.md`` rule 4). Containment is checked once, where the untrusted value
@@ -72,6 +89,7 @@ class TranscribeRequest(BaseModel):
 
     media_path: str
     language: str
+    options: TranscribeOptions | None = None
 
 
 @app.get("/health", response_model=Health)
@@ -128,8 +146,12 @@ def transcribe(request: TranscribeRequest) -> JSONResponse:
     transcript, because a caller cannot tell an empty transcript from a silent video, and
     the difference decides whether a user goes looking for a subtitle file or for a bug.
     """
+    settings = asr.Settings.from_env().merged(
+        request.options.model_dump() if request.options else None
+    )
+
     try:
-        result = asr.transcribe(request.media_path, request.language)
+        result = asr.transcribe(request.media_path, request.language, settings)
     except asr.AsrLanguageMismatch as exc:
         return _error(409, "ASR_LANGUAGE_MISMATCH", str(exc), retryable=False)
     except asr.AsrUnavailable as exc:

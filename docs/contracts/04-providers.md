@@ -218,6 +218,23 @@ interface AsrRequest {
   /** Pinned from `profile.target_language`, never detected. A detected language that
    *  disagrees fails the job with both values named (ADR 0016 §3). */
   language: string;
+  /** ADDED (ADR 0019 §5). Resolved from the settings surface per job and sent with the
+   *  request, so the sidecar holds no editable state of its own and these can change
+   *  without restarting a Python process. Optional: an absent field means "use your own
+   *  default" on the sidecar side, which is what lets a direct caller omit them. */
+  options?: AsrOptions;
+}
+
+interface AsrOptions {
+  model: string;
+  device: string;
+  computeType: string;
+  /** Refuse rather than fall back to CPU. The default is `true`, because CPU inference is
+   *  roughly twenty times slower and otherwise identical — a job that looks healthy for
+   *  forty minutes. The setting exists so accepting that is a deliberate act. */
+  requireGpu: boolean;
+  align: boolean;
+  languageMinProbability: number;
 }
 
 interface AsrResult {

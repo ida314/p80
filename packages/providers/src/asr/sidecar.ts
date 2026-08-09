@@ -10,7 +10,7 @@
  * `127.0.0.1` is not external.
  */
 
-import { ERROR_CODES, P80Error, type ParseWarningKind } from '@p80/core';
+import { ERROR_CODES, P80Error, type AsrOptions, type ParseWarningKind } from '@p80/core';
 import type { AsrProvider, AsrRequest, AsrResult, AsrWord, ParseWarning } from '../index.js';
 
 /**
@@ -83,6 +83,10 @@ export class SidecarAsrProvider implements AsrProvider {
         body: JSON.stringify({
           media_path: request.mediaPath,
           language: request.language,
+          // Omitted entirely when absent, rather than sent as nulls. The sidecar treats an
+          // absent field as "use my own default", and a null would have to mean the same
+          // thing through a second code path (ADR 0019 §5).
+          ...(request.options ? { options: toWireOptions(request.options) } : {}),
         }),
         signal: controller.signal,
       });
@@ -149,6 +153,24 @@ export class SidecarAsrProvider implements AsrProvider {
       retryable: response.status === 503,
     });
   }
+}
+
+/**
+ * The one place P80's camelCase settings become the sidecar's snake_case fields.
+ *
+ * Written out field by field rather than transformed generically, so adding a setting on
+ * one side without the other is a typecheck failure here instead of a value that silently
+ * never arrives.
+ */
+function toWireOptions(options: AsrOptions): Record<string, unknown> {
+  return {
+    model: options.model,
+    device: options.device,
+    compute_type: options.computeType,
+    require_gpu: options.requireGpu,
+    align: options.align,
+    language_min_probability: options.languageMinProbability,
+  };
 }
 
 function toWord(w: WireWord): AsrWord {

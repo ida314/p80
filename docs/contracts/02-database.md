@@ -327,6 +327,23 @@ inference is local and `.env.local` holds only the vLLM base URL and model ID, w
 config, not secrets. The prohibition stands regardless, so that a future cloud adapter
 cannot quietly land a key in a settings row.
 
+<!-- ADDED (ADR 0019): what the table is for. -->
+**This is the runtime-configuration override.** `key` is the environment variable's own
+name, so a row and a `.env.local` line are visibly the same setting. **The environment
+seeds and the row overrides:** a key with no row takes the value `loadConfig()` produced, a
+key with a row takes the row, and deleting the row reverts. Every read reports which of the
+two it came from, so a value that no longer matches the dotfile reads as overridden rather
+than as ignored.
+
+Only some keys are eligible, and the rule is mechanical: **a key is writable only if every
+consumer reads it at the point of use.** Ports and the bind host are consumed by `listen()`
+before any request exists, so a row for them would be honoured by nothing — and a setting
+that silently does nothing is worse than one that is absent. The API refuses those writes
+and the surface shows them read-only. `packages/core/src/settings.ts` holds the registry
+that decides; it is not a CHECK constraint here, because the eligible set changes with the
+code that reads each key and a CHECK would need the 12-step rebuild that migration 0002
+warns against to follow along.
+
 ---
 
 ## 2. Tables missing from the original spec

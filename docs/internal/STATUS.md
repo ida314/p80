@@ -8,6 +8,7 @@
 > *where*, write an ADR.
 
 **Current stage:** Stage 2 — Local media ingestion and transcription (in progress)
+**Also landed:** Stage 2b — Runtime-editable settings (code-complete, one manual check)
 **Milestone:** M1 — First vertical slice
 **Last updated:** 2026-08-09
 
@@ -19,8 +20,8 @@
 manual browser checks.** ADRs 0015–0018 replaced embedded YouTube with local media files.
 Brief at `plan/stage-02-ingestion.md`, which now carries the before/after table.
 
-**380 TypeScript tests, 15 Python tests, nine packages typechecking clean,
-`scripts/smoke.sh` 40/40 against a live `pnpm dev`, and `pnpm --filter @p80/web build`
+**452 TypeScript tests, 24 Python tests, nine packages typechecking clean,
+`scripts/smoke.sh` 51/51 against a live `pnpm dev`, and `pnpm --filter @p80/web build`
 clean.** Migration 0002 landed — three columns on `videos`, six on `transcript_files`, two
 on `transcript_segments`, and `transcript_words`.
 
@@ -63,6 +64,39 @@ recorded as limitations:
 - **The external-request list is empty**, not short. `CLAUDE.md` rule 15 went back to the
   unqualified form Stage 2 had to weaken it out of.
 
+### Stage 2b — runtime settings (ADR 0019)
+
+**Code-complete; one manual check (M6) outstanding.** Brief at `plan/stage-02b-settings.md`.
+`P80_MEDIA_ROOT` and the six `P80_ASR_*` options are editable from both clients and take
+effect without a restart; everything else is displayed read-only.
+
+| What | State |
+|---|---|
+| ADR 0019 written and accepted; ADR 0007 amended | **done** |
+| `settings` registry, tiers, `resolveRuntimeSettings` | **done** |
+| `validateMediaRoot` + refusal list | **done** |
+| `GET/PUT /api/settings`, `POST .../media-root/preflight` | **done** |
+| Every media-root consumer reads per use | **done** |
+| ASR options in the sidecar request body | **done** |
+| `p80 settings` / `p80 settings set` | **done** |
+| Web `/settings` page | **done** |
+| Manual check M6 | **not run** |
+
+No migration was needed: `settings` has been in migration 0001 since the contracts were
+extracted, unused, and this is what it was for.
+
+**`.env.local` was read by nothing, and the API and worker could not start.** Found while
+verifying Stage 2b against a live `pnpm dev`. `dev.mjs` checked the file existed and printed
+a note; no process ever loaded it. Vite loads it for the web client on its own, so the
+browser and the sidecar came up and the two TypeScript services died on
+`P80_MEDIA_ROOT: Required` — which reads as a broken API rather than as an unloaded config
+file. `loadConfig()` now reads the file when called with no argument, with the process
+environment taking precedence; passing an explicit env skips it, so the suite cannot inherit
+a developer's dotfile. Three regression tests in `packages/core/test/config.test.ts`.
+
+This is why `smoke.sh` had not been run since the ADR 0015–0018 rewrite made
+`P80_MEDIA_ROOT` required: it needs a live API, and there had not been one.
+
 ## Blocked on
 
 Nothing blocks the remaining Stage 2 phases.
@@ -79,6 +113,9 @@ Nothing blocks the remaining Stage 2 phases.
 
 - [x] Repo initialized, spec frozen, contracts extracted, `CLAUDE.md` written
 - [x] **ADRs 0001–0011 accepted** — see `docs/decisions/README.md`
+- [x] **ADR 0019 accepted (2026-08-09)** — runtime-editable settings. The `settings` table
+      overrides the environment; live vs boot tiers; the settings surface goes in both
+      clients, which amends ADR 0007.
 - [x] **ADRs 0015–0018 accepted (2026-08-09)** — local media replaces embedded YouTube;
       local ASR primary with upload fallback; word-level timing as the source of truth;
       content-hash file identity. The largest revision so far.
@@ -95,6 +132,8 @@ Nothing blocks the remaining Stage 2 phases.
 
 ## Next actions
 
+0. **Run manual check M6** (`plan/stage-02b-settings.md`) alongside M1–M5 — it needs the
+   same browser session and one folder that holds no video.
 1. **Run manual checks M1–M5** (`plan/stage-02-ingestion.md`, *Manual checks*). Each is a
    reproducible sequence with a stated failure condition; M1 and M4 close exit criteria 3
    and 6, and Stage 2 is done when all five pass. Needs a German video file under
@@ -157,6 +196,13 @@ two-video corpus** and has to wait for a real library.
 
 ## Notes
 
+- **A fifth silent bug, and the first that stopped the product from starting at all.**
+  Nothing loaded `.env.local`. It is documented in `SETUP.md`, checked for by `pnpm dev`,
+  and was read by no process — Vite loads it for the web client itself, which is why three
+  of the four services appeared to work. Same family as the four below, with one difference
+  worth recording: the previous four reported healthy while being wrong, and this one
+  reported *unhealthy* while the config was fine. It stayed hidden because the symptom
+  pointed at the API and the cause was in a file nobody was reading.
 - **The two deferred CHECK constraints are now permanently deferred, and the reason is a
   trap.** SQLite cannot add a CHECK to an existing table; it needs the 12-step rebuild. But
   `DROP TABLE videos` under `PRAGMA foreign_keys = ON` — which `client.ts` sets — performs

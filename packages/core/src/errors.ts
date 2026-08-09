@@ -77,6 +77,20 @@ export const ERROR_CODES = {
   TRANSCRIPT_PARSE_FAILED: 'TRANSCRIPT_PARSE_FAILED',
   /** The stored file no longer matches its checksum. */
   TRANSCRIPT_FILE_CORRUPT: 'TRANSCRIPT_FILE_CORRUPT',
+
+  // --- Stage 2b: runtime settings (ADR 0019) ---
+  /** A `PUT` naming a key the registry does not know, or one in the boot tier. Boot-tier
+   *  writes are refused rather than accepted-and-ignored: a setting that silently does
+   *  nothing is worse than one that is absent. `details.reason` says which case it is. */
+  SETTING_NOT_EDITABLE: 'SETTING_NOT_EDITABLE',
+  /** A proposed media root that cannot be one. `details.reason` carries a
+   *  `MediaRootRejection`, which distinguishes a typo from a refusal on principle. */
+  INVALID_MEDIA_ROOT: 'INVALID_MEDIA_ROOT',
+  /** The new root is valid, and videos already added would stop resolving under it.
+   *  Nothing is destroyed and changing the root back restores them, so this is a
+   *  confirmation gate rather than a failure — `acknowledgeOrphans: true` proceeds.
+   *  `details` carries the counts. Same shape as `TRANSCRIPT_ALREADY_EXISTS`. */
+  MEDIA_ROOT_WOULD_ORPHAN: 'MEDIA_ROOT_WOULD_ORPHAN',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

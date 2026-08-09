@@ -13,6 +13,7 @@ import {
 } from '@p80/core';
 import {
   getLatestTranscriptFile,
+  getRuntimeSettings,
   getVideo,
   insertTranscriptFile,
   replaceSegments,
@@ -74,10 +75,11 @@ export function createTranscribeHandler(deps: {
       return skipped(video.id, 'upload_won');
     }
 
-    const absolutePath = assertInsideMediaRoot(
-      video.mediaPath ?? '',
-      deps.config.P80_MEDIA_ROOT,
-    );
+    // Both the root and the ASR options are read here, per job, rather than captured at
+    // startup (ADR 0019). The options travel with the request so the sidecar holds no
+    // editable state of its own.
+    const { mediaRoot, asr: asrOptions } = getRuntimeSettings(ctx.handle, deps.config);
+    const absolutePath = assertInsideMediaRoot(video.mediaPath ?? '', mediaRoot);
 
     setTranscriptStatus(ctx.handle, video.id, 'parsing');
 
@@ -86,6 +88,7 @@ export function createTranscribeHandler(deps: {
       result = await deps.asr.transcribe({
         mediaPath: absolutePath,
         language: input.language,
+        options: asrOptions,
       });
     } catch (error) {
       // `failed` rather than a silent revert to `none`: the user asked for a transcript and
