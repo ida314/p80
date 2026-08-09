@@ -15,6 +15,9 @@ WEB_PORT="${P80_WEB_PORT:-5173}"
 NLP_PORT="${P80_NLP_PORT:-5181}"
 HOST="${P80_BIND_HOST:-127.0.0.1}"
 API="http://${HOST}:${API_PORT}"
+# The sidecar may not be on this machine. Probe wherever the API is configured to reach
+# it, or a remote-inference setup reports its own absent loopback sidecar as the failure.
+NLP="${P80_NLP_BASE_URL:-http://${HOST}:${NLP_PORT}}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STORAGE="${P80_STORAGE_PATH:-${REPO}/data/storage}"
 
@@ -39,17 +42,17 @@ echo
 
 echo "health"
 check "api /api/health"            200 "$(status "${API}/api/health")"
-check "nlp /health"                200 "$(status "http://${HOST}:${NLP_PORT}/health")"
+check "nlp /health"                200 "$(status "${NLP}/health")"
 check "web dev server"             200 "$(status "http://${HOST}:${WEB_PORT}/")"
 # Not implemented until Stage 4, and it says so rather than degrading (ADR 0002).
 check "nlp /annotate refuses"      501 "$(status -X POST -H 'content-type: application/json' \
                                             -d '{"language":"de","sentences":["Hallo"]}' \
-                                            "http://${HOST}:${NLP_PORT}/annotate")"
+                                            "${NLP}/annotate")"
 # ADR 0016. The sidecar reports capabilities separately, so a working ASR model does not
 # imply a working annotator. Either flag may be false — what must never happen is a
 # transcript being returned when the model is absent, which is asserted in the unit tests.
 check "nlp reports asr capability" "yes" \
-  "$(curl -s "http://${HOST}:${NLP_PORT}/health" | grep -qo '"transcribe_available":' && echo yes || echo no)"
+  "$(curl -s "${NLP}/health" | grep -qo '"transcribe_available":' && echo yes || echo no)"
 
 echo
 echo "profile persists"
