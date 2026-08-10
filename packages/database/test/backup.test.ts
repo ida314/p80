@@ -1,6 +1,8 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { backupDatabase } from '../src/backup.js';
+import { backupDatabase, pruneBackups } from '../src/backup.js';
 import { openDatabase } from '../src/client.js';
 import { setSetting } from '../src/repositories/settings.js';
 import { createTempDatabase, type TempDatabase } from './helpers.js';
@@ -63,5 +65,75 @@ describe('database backup', () => {
     } finally {
       memory.close();
     }
+  });
+});
+
+/**
+ * A daily timer needs a retention policy or it fills a disk. Deleting a backup is the only
+ * destructive thing in this file, so the tests are about what it *refuses* to delete.
+ */
+describe('backup retention', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  let dir: string;
+
+  const age = (name: string, days: number) => {
+    const path = join(dir, name);
+    writeFileSync(path, 'x');
+    const seconds = (Date.now() - days * DAY) / 1000;
+    utimesSync(path, seconds, seconds);
+    return path;
+  };
+
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const setup = () => {
+    dir = mkdtempSync(join(tmpdir(), 'p80-prune-'));
+  };
+
+  it('removes routine backups past the window', () => {
+    setup();
+    const old = age('p80.2020-01-01.db', 400);
+    const recent = age('p80.2026-08-01.db', 1);
+    for (let i = 0; i < 3; i += 1) age(`p80.filler-${i}.db`, 2);
+
+    expect(pruneBackups(dir)).toEqual([old]);
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(recent)).toBe(true);
+  });
+
+  it('never removes a tagged backup, however old', () => {
+    setup();
+    // `pre-migration` backups exist because a migration is irreversible. Age is not a
+    // reason to lose one.
+    const tagged = age('p80.pre-migration.2019-01-01.db', 900);
+    for (let i = 0; i < 5; i += 1) age(`p80.routine-${i}.db`, 900);
+
+    const removed = pruneBackups(dir);
+    expect(removed).not.toContain(tagged);
+    expect(existsSync(tagged)).toBe(true);
+  });
+
+  it('keeps a floor of recent backups even when every one is past the window', () => {
+    setup();
+    for (let i = 0; i < 5; i += 1) age(`p80.old-${i}.db`, 100 + i);
+
+    expect(pruneBackups(dir, { keepMinimum: 3 })).toHaveLength(2);
+  });
+
+  it('ignores anything that is not a backup', () => {
+    setup();
+    const stray = age('notes.txt', 900);
+    // Distinct ages so "the oldest" is unambiguous rather than readdir order.
+    age('p80.a.db', 903);
+    age('p80.b.db', 902);
+    age('p80.c.db', 901);
+    age('p80.d.db', 900);
+
+    expect(pruneBackups(dir)).toEqual([join(dir, 'p80.a.db')]);
+    expect(existsSync(stray)).toBe(true);
+  });
+
+  it('is a no-op when nothing has ever been backed up', () => {
+    setup();
+    expect(pruneBackups(join(dir, 'never-created'))).toEqual([]);
   });
 });

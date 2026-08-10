@@ -43,7 +43,15 @@ echo
 echo "health"
 check "api /api/health"            200 "$(status "${API}/api/health")"
 check "nlp /health"                200 "$(status "${NLP}/health")"
-check "web dev server"             200 "$(status "http://${HOST}:${WEB_PORT}/")"
+# The browser client comes from one of two places and this script has to work against
+# both. Under `pnpm dev` Vite serves it on its own port; in a deployment the API serves
+# the build on its own port and there is nothing on ${WEB_PORT} at all. A built `dist` is
+# what tells the two apart, and it is the same signal the API itself uses.
+if [[ -f "${REPO}/apps/web/dist/index.html" ]]; then
+  check "web client (served by api)" 200 "$(status "${API}/")"
+else
+  check "web dev server"           200 "$(status "http://${HOST}:${WEB_PORT}/")"
+fi
 # Not implemented until Stage 4, and it says so rather than degrading (ADR 0002).
 check "nlp /annotate refuses"      501 "$(status -X POST -H 'content-type: application/json' \
                                             -d '{"language":"de","sentences":["Hallo"]}' \
@@ -90,7 +98,15 @@ echo "ingestion — add, upload, parse, read, correct, delete"
 # ADR 0015: P80 is pointed at a file it can already reach. The script creates one under
 # `P80_MEDIA_ROOT` — a few bytes, never decoded — because the API checks existence before
 # writing a row, and a smoke test that skipped that would skip the whole containment path.
-media_root="${P80_MEDIA_ROOT:-${REPO}/data/media}"
+# Asked of the API rather than guessed from the environment. Since ADR 0019 the media root
+# is runtime-editable and the `settings` table wins over `.env.local`, so this shell's idea
+# of it can be stale or — running against an installed service — absent entirely. Writing
+# the fixture somewhere the API is not looking fails as "path not found", which points at
+# the file rather than at the disagreement.
+media_root="$(curl -s "${API}/api/settings" \
+  | grep -o '"key":"P80_MEDIA_ROOT","tier":"[a-z]*","value":"[^"]*"' \
+  | sed 's/.*"value":"//; s/"$//')"
+media_root="${media_root:-${P80_MEDIA_ROOT:-${REPO}/data/media}}"
 media_rel="smoke/smoke-$(date +%s | tail -c 7).mp4"
 mkdir -p "$(dirname "${media_root}/${media_rel}")"
 printf 'not a real container' > "${media_root}/${media_rel}"
@@ -289,6 +305,10 @@ else
   check "DELETE the transcript"      200 "$(status -X DELETE "${API}/api/videos/${video}/transcript")"
   check "DELETE the video"           200 "$(status -X DELETE "${API}/api/videos/${video}")"
 fi
+
+# The media root is the user's own library, not a scratch directory. Leaving fixtures in it
+# would be P80 writing to the one place it is supposed to only ever read from.
+rm -rf "${media_root:?}/smoke"
 
 echo
 echo "media policy"

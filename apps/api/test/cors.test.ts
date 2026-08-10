@@ -10,11 +10,25 @@ import { createTestApi, type TestApi } from './helpers.js';
  */
 let api: TestApi;
 beforeAll(async () => {
-  api = await createTestApi({ P80_WEB_PORT: '5173' });
+  api = await createTestApi({ P80_WEB_PORT: '5173', P80_API_PORT: '5180' });
 });
 afterAll(async () => api?.dispose());
 
 describe('CORS', () => {
+  it('accepts the API’s own origin, which a deployed client uses', async () => {
+    // The deployed client is served by the API on the API's port, so its requests are
+    // same-origin — but browsers still send `Origin` on anything that is not GET or
+    // HEAD. Without this, every write from the deployed UI would be a 403.
+    const res = await api.server.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: { origin: 'http://127.0.0.1:5180' },
+      payload: { dailyMinutes: 20 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBe('http://127.0.0.1:5180');
+  });
+
   it('accepts the loopback web origin', async () => {
     for (const origin of ['http://127.0.0.1:5173', 'http://localhost:5173']) {
       const res = await api.server.app.inject({

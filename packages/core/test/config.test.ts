@@ -77,11 +77,32 @@ describe('configuration', () => {
     expect(isLanExposed(config)).toBe(true);
   });
 
-  it('allows only loopback web origins', () => {
-    const config = loadConfig({ ...REQUIRED, P80_WEB_PORT: '5173' });
+  it('allows only loopback origins, on the web port and the API port', () => {
+    // Two ports because the client is served from two places: Vite under `pnpm dev`, and
+    // the API itself in a deployment. The API's own origin has to be listed — browsers
+    // attach `Origin` to same-origin requests whenever the method is not GET or HEAD.
+    const config = loadConfig({
+      ...REQUIRED,
+      P80_WEB_PORT: '5173',
+      P80_API_PORT: '5180',
+    });
     expect(allowedOrigins(config)).toEqual([
       'http://127.0.0.1:5173',
       'http://localhost:5173',
+      'http://127.0.0.1:5180',
+      'http://localhost:5180',
+    ]);
+  });
+
+  it('does not list a port twice when the client and API share one', () => {
+    const config = loadConfig({
+      ...REQUIRED,
+      P80_WEB_PORT: '5180',
+      P80_API_PORT: '5180',
+    });
+    expect(allowedOrigins(config)).toEqual([
+      'http://127.0.0.1:5180',
+      'http://localhost:5180',
     ]);
   });
 

@@ -102,6 +102,10 @@ pnpm db:backup    snapshot the database (VACUUM INTO, not a copy)
 A local model server is managed separately from `pnpm dev`, since it is long-lived and
 expensive to start.
 
+To *use* P80 rather than develop it, install it as background services so it survives a
+reboot — `bash scripts/service-install.sh`, described in `docs/SETUP.md` and decided in
+[ADR 0021](docs/decisions/0021-running-as-a-service.md).
+
 ## Documentation
 
 [**`docs/README.md`**](docs/README.md) is the index and explains how the tree is organised.

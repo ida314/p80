@@ -10,6 +10,7 @@
 **Current stage:** Stage 3 — Manual learning-item prototype (code-complete, four manual checks)
 **Also open:** Stage 2 and 2b, code-complete, six manual browser checks outstanding
 **Milestone:** M1 — First vertical slice
+**Running at:** <http://127.0.0.1:5180> as systemd user services (ADR 0021)
 **Last updated:** 2026-08-09
 
 ---
@@ -119,6 +120,58 @@ a developer's dotfile. Three regression tests in `packages/core/test/config.test
 This is why `smoke.sh` had not been run since the ADR 0015–0018 rewrite made
 `P80_MEDIA_ROOT` required: it needs a live API, and there had not been one.
 
+### Deployment (ADR 0021)
+
+**P80 runs as systemd user services on the development machine.** Outside a stage; noted
+here per §5.1. Installed with `bash scripts/service-install.sh`.
+
+| What | State |
+|---|---|
+| ADR 0021 written and accepted | **done** |
+| `deploy/systemd/*.in` — target, migrate, api, worker, nlp, backup service + timer | **done** |
+| `scripts/service-install.sh` with preflight, remote-sidecar skip, `--uninstall` | **done** |
+| API serves `apps/web/dist`; `allowedOrigins` widened to the API port | **done** |
+| `pruneBackups` retention, wired into `db:backup` | **done** |
+| `smoke.sh`: client check works from either origin; media root read from the API | **done** |
+| Verified: restart, graceful stop, loud config failure, backup restore | **done** |
+| Verified: survives a reboot | **not run** |
+
+562 TypeScript tests, 24 Python tests, nine packages typechecking, `smoke.sh` 75/75 against
+the installed services. Check count unchanged at 75 — the client check moved rather than
+multiplied.
+
+**The deployed URL is <http://127.0.0.1:5180>, not 5173.** There is no web unit; the API
+serves the built client. Nothing listens on 5173 unless `pnpm dev` is running, and the two
+cannot run at once.
+
+Three findings from the machine, none of which the code caused:
+
+- **Transcription runs on CPU here.** The available CTranslate2 build carries no CUDA
+  libraries, so `P80_ASR_REQUIRE_GPU=true` made every job a refusal. `.env.local` sets
+  `cpu`/`int8`/`require_gpu=false`/`align=false`; all live-tier, so the Settings page can
+  flip them back with no redeploy.
+- **`P80_VLLM_MODEL_ID` now names the model the local server actually serves**, so
+  `/api/health` reports `inference.configured` truthfully. Nothing consumes it until Stage 6.
+- **`smoke.sh` was writing fixtures into the media root and leaving them.** Harmless when
+  the root was `data/media`; litter in a real library. It cleans up after itself now.
+
+Two sidecar bugs fell out of having the ASR extra actually installed, both fixed:
+
+- **A `device=cuda` request on a build without CUDA returned 500 `ASR_FAILED`.**
+  `assert_device` asks whether a GPU is present, which is a different question from whether
+  this build can reach one, so the failure landed on `WhisperModel(...)` and escaped as
+  "transcription failed" — a setup problem reported as a broken file. Now a 501
+  `ASR_UNAVAILABLE` naming the model, device, and compute type.
+- **`test_options_reach_the_settings_the_endpoint_uses` assumed no model was installed**
+  and failed for anyone who followed `docs/SETUP.md`. It now asserts the claim it meant —
+  this build cannot transcribe with these settings — and is indifferent to the extra.
+
+**Still owed, and deliberately not written here:** the ADR that commit `da31427` says is
+required before `P80_NLP_BASE_URL` or `P80_VLLM_BASE_URL` may point off this machine —
+`CLAUDE.md` rules 13 and 15 say the runtime external-request list is empty, and changing
+that is a decision. ADR 0021 does not touch it; the installer only declines to start a
+local sidecar when the URL already points elsewhere.
+
 ## Blocked on
 
 Nothing blocks the remaining Stage 2 phases.
@@ -135,6 +188,9 @@ Nothing blocks the remaining Stage 2 phases.
 
 - [x] Repo initialized, spec frozen, contracts extracted, `CLAUDE.md` written
 - [x] **ADRs 0001–0011 accepted** — see `docs/decisions/README.md`
+- [x] **ADR 0021 accepted (2026-08-09)** — systemd user units over containers; the API
+      serves the built browser client, which amends ADR 0007 on where the client is served
+      from; migrations and backups get their own units.
 - [x] **ADR 0019 accepted (2026-08-09)** — runtime-editable settings. The `settings` table
       overrides the environment; live vs boot tiers; the settings surface goes in both
       clients, which amends ADR 0007.

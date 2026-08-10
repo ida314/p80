@@ -1,9 +1,13 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
 import {
   ERROR_CODES,
   P80Error,
   allowedOrigins,
   createLogger,
+  findRepoRoot,
   isLanExposed,
   toEnvelope,
   type Config,
@@ -31,7 +35,23 @@ export interface ApiServer {
   close(): Promise<void>;
 }
 
-export async function buildServer(config: Config): Promise<ApiServer> {
+export interface ServerOptions {
+  /**
+   * Where the built browser client lives. Defaults to `apps/web/dist` under the
+   * repository root.
+   *
+   * An argument rather than a `P80_*` variable on purpose: `CONFIG_KEYS` is a closed set
+   * asserted against the schema, and this is a build-output location, not something a
+   * user configures. Tests use it to exercise both the built and unbuilt cases without
+   * depending on whether the repository happens to have been built.
+   */
+  webRoot?: string;
+}
+
+export async function buildServer(
+  config: Config,
+  options: ServerOptions = {},
+): Promise<ApiServer> {
   const logger = createLogger('api', config.P80_LOG_LEVEL);
 
   const handle = openDatabase(config.P80_DB_PATH);
@@ -98,7 +118,48 @@ export async function buildServer(config: Config): Promise<ApiServer> {
     return reply.status(status).send(body);
   });
 
+  /**
+   * The built browser client, served by the API itself on the API's own port.
+   *
+   * In development Vite does two jobs on `P80_WEB_PORT`: it compiles the client and it
+   * proxies `/api/*` here. In a deployment there is no Vite, so the API serves
+   * `apps/web/dist` and everything lives on one origin — no proxy hop, and no reliance on
+   * the CORS allowlist for the app's own requests.
+   *
+   * Resolved from the repository root rather than `cwd` for the same reason every other
+   * path is (`resolveFromRepoRoot`): this process is started from at least three different
+   * working directories depending on who starts it.
+   */
+  const webRoot = options.webRoot ?? join(findRepoRoot(), 'apps', 'web', 'dist');
+  const webBuilt = existsSync(join(webRoot, 'index.html'));
+
+  if (webBuilt) {
+    await app.register(fastifyStatic, {
+      root: webRoot,
+      // NOT the default `true`. A wildcard registers a catch-all `GET /*` that answers
+      // every unmatched path itself, which would swallow the client-route fallback below
+      // and turn a refreshed `/items/abc` into a 404. With `false`, each built file is
+      // registered individually and anything else falls through to the handler.
+      wildcard: false,
+    });
+  } else {
+    // Not an error. `pnpm dev` serves the client from Vite and never builds, so an absent
+    // `dist` is the normal development state — the API simply has no client to hand out.
+    logger.info(
+      { webRoot },
+      'no built web client found; serving the API only. `pnpm build` produces one.',
+    );
+  }
+
   app.setNotFoundHandler((request, reply) => {
+    // A client-side route, not a missing endpoint. React Router owns the path, so the
+    // shell is the correct answer and the router decides what it means — otherwise
+    // refreshing any page below `/` is a 404. `/api/*` is never a client route: an
+    // unknown endpoint must stay a JSON error, or a typo in a `curl` returns HTML.
+    if (webBuilt && request.method === 'GET' && !request.url.startsWith('/api/')) {
+      return reply.type('text/html').sendFile('index.html');
+    }
+
     const err = P80Error.notFound('Route', {
       method: request.method,
       url: request.url,

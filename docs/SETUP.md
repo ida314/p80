@@ -39,7 +39,7 @@ holds.
 git clone <repo> && cd p80
 pnpm install
 
-cp .env.example .env.local          # optional; defaults work
+cp .env.example .env.local          # required — then set P80_MEDIA_ROOT
 
 # Python sidecar. uv reads services/nlp/.python-version and fetches 3.13 if needed.
 uv sync --project services/nlp
@@ -48,10 +48,14 @@ pnpm db:migrate                     # optional; the API and worker also migrate 
 pnpm dev                            # api + worker + web + nlp
 ```
 
+**`.env.local` is not optional**, even though every value in it but one has a working
+default. `P80_MEDIA_ROOT` has none, deliberately (see *The media library*, below), so the
+API and worker exit at startup naming it until the file exists and sets it.
+
 Then, in another terminal:
 
 ```bash
-bash scripts/smoke.sh               # 10 checks against the running system
+bash scripts/smoke.sh               # 75 checks against the running system
 pnpm --filter @p80/tui dev health   # the management client
 ```
 
@@ -78,13 +82,14 @@ uv python install 3.13
 | Command | Does |
 |---|---|
 | `pnpm dev` | Starts api, worker, web, and the NLP sidecar |
+| `bash scripts/service-install.sh` | Installs P80 as background services (ADR 0021) |
 | `pnpm --filter @p80/tui dev settings` | Show configuration, editable and read-only |
 | `pnpm test` | Vitest, unit + integration |
 | `pnpm typecheck` | `tsc --noEmit` across all nine TypeScript packages |
 | `pnpm db:migrate` | Applies pending migrations |
 | `pnpm db:backup` | Snapshots the database into `data/backups/` |
 | `pnpm dev:noop` | Enqueues a `NOOP` job so the worker has something to claim |
-| `bash scripts/smoke.sh` | End-to-end check against a running `pnpm dev` |
+| `bash scripts/smoke.sh` | End-to-end check against a running P80, however it was started |
 | `uv run --project services/nlp pytest services/nlp/tests` | Sidecar tests |
 
 ## Two processes `pnpm dev` does *not* start
@@ -107,6 +112,17 @@ Enforces the enrichment ceilings — 100 candidates per video and 45 minutes per
 hard; 40 h/month, warn only. Not integrated until enrichment exists in Stage 6. It needs
 a transactional SQLite `StorageAdapter` written upstream first, because the shipped
 `InMemoryAdapter` is single-process and both the API and the worker consume budget.
+
+### And one it starts *conditionally*
+
+`pnpm dev` starts the NLP sidecar only when `P80_NLP_BASE_URL` names a loopback host.
+Pointed at another machine, it prints a note and starts three processes instead of four —
+a local sidecar would be a Python process on 5181 that nothing talks to, and both answer
+`/health` identically while only one of them has the model.
+
+A sidecar elsewhere opens media paths on **its own** filesystem, so that machine needs
+`P80_MEDIA_ROOT` at the same absolute path. `scripts/service-install.sh` applies the same
+rule and installs no sidecar unit in that case.
 
 ## Speech recognition (ADR 0016)
 
@@ -192,6 +208,66 @@ explicit act at the config file, not something a web page can do.
 paths relative to the root, so videos outside the new one stop playing until you change it
 back — their transcripts, corrections, and review history are untouched either way. Both
 surfaces count how many videos that affects and ask again before doing it.
+
+## Running P80 in the background (ADR 0021)
+
+`pnpm dev` is for developing P80. To *use* it — to have it survive a reboot and be there
+when you open a browser — install it as systemd **user** services. Nothing runs as root.
+
+```bash
+bash scripts/service-install.sh              # install (or reinstall) and start
+bash scripts/service-install.sh --smoke      # ...and run the end-to-end check after
+bash scripts/service-install.sh --uninstall  # stop, disable, and remove
+```
+
+The installer refuses rather than installing something that cannot start: it checks that
+`.env.local` exists, that `P80_MEDIA_ROOT` names a real directory, that the toolchain is on
+the path, and that the sidecar environment exists when the sidecar runs here. Then it builds
+the browser client and writes the units from the templates in `deploy/systemd/`.
+
+Three services and a timer:
+
+| Unit | What |
+|---|---|
+| `p80-migrate.service` | Applies migrations once, before the rest start |
+| `p80-api.service` | The API **and the built browser client**, on `P80_API_PORT` |
+| `p80-worker.service` | The job worker |
+| `p80-nlp.service` | The NLP sidecar — omitted when it runs on another machine |
+| `p80-backup.timer` | A daily `VACUUM INTO` snapshot, with retention |
+
+```bash
+systemctl --user status p80.target       # all of it at once
+systemctl --user restart p80.target
+journalctl --user -u p80-api -f          # logs
+```
+
+**One difference from `pnpm dev`, and it changes the URL.** In development Vite serves the
+client on `P80_WEB_PORT` and proxies the API. Installed, there is no Vite: the API serves
+the built client itself, so everything is one origin and nothing listens on the web port.
+
+| | Client | API |
+|---|---|---|
+| `pnpm dev` | `P80_WEB_PORT` | `P80_API_PORT` |
+| Installed | `P80_API_PORT` | `P80_API_PORT` |
+
+Both bind `127.0.0.1`. The two cannot run at once — they want the same API port — so stop
+the services before `pnpm dev`.
+
+Rebuilding after `git pull` means rerunning the installer, or `pnpm build` followed by
+`systemctl --user restart p80.target`: the API serves the files that were on disk when it
+started.
+
+The units name the absolute path of the `node` that was on your `PATH` at install time,
+because a service manager has no login shell to resolve one. If you change Node versions —
+particularly under a version manager, which moves the binary — rerun the installer.
+`--no-build` makes that quick.
+
+User services stop at logout unless lingering is enabled. The installer says so if it is
+not; enabling it is the one step that needs root:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
 
 ## Configuration
 

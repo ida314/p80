@@ -163,10 +163,22 @@ export function isLanExposed(config: Config): boolean {
   return config.P80_ALLOW_LAN || config.P80_BIND_HOST !== '127.0.0.1';
 }
 
-/** The only origins the API accepts by default (spec §32.5, `03-api.md` §10). */
+/**
+ * The only origins the API accepts by default (spec §32.5, `03-api.md` §10).
+ *
+ * Two ports, because the client is served from two places. Under `pnpm dev` it comes from
+ * Vite on `P80_WEB_PORT` and every request is cross-origin. In a deployment the API serves
+ * the built client itself, so the origin is the API's own — and that still needs to be
+ * listed: browsers send `Origin` on same-origin requests whenever the method is not
+ * GET or HEAD, so without this entry every `POST /api/items` from the deployed UI would
+ * come back `ORIGIN_NOT_ALLOWED`.
+ *
+ * Both are loopback. This widens which loopback port may talk to the API, not who may.
+ */
 export function allowedOrigins(config: Config): string[] {
-  return [
-    `http://127.0.0.1:${config.P80_WEB_PORT}`,
-    `http://localhost:${config.P80_WEB_PORT}`,
-  ];
+  const ports = new Set([config.P80_WEB_PORT, config.P80_API_PORT]);
+  return [...ports].flatMap((port) => [
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`,
+  ]);
 }

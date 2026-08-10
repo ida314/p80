@@ -214,11 +214,16 @@ class TestRequestOptions:
         assert base.merged({"beam_size": 8}) == base
 
     def test_options_reach_the_settings_the_endpoint_uses(self, tmp_path) -> None:
-        """End to end through the route, without a model installed.
+        """End to end through the route, with no usable model for this configuration.
 
         `require_gpu=False` disarms the device check, so the request gets far enough to
-        fail on the missing model — which is a 501, not the 503 the GPU refusal produces.
+        fail on loading the model — which is a 501, not the 503 the GPU refusal produces.
         Distinguishing those two is how this asserts the override actually applied.
+
+        Deliberately indifferent to whether the ASR extra is installed. Both routes to a
+        501 are the same claim: this build cannot transcribe with these settings. The
+        earlier version assumed the model was absent and started failing the moment
+        anyone followed docs/SETUP.md and installed it.
         """
         media = tmp_path / "clip.mp4"
         media.write_bytes(b"not really an mp4")

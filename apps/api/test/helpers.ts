@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, type Config } from '@p80/core';
-import { buildServer, type ApiServer } from '../src/server.js';
+import { buildServer, type ApiServer, type ServerOptions } from '../src/server.js';
 
 export interface TestApi {
   server: ApiServer;
@@ -17,6 +17,7 @@ export interface TestApi {
  *  request pipeline, including CORS and the error handler. */
 export async function createTestApi(
   env: Partial<Record<string, string>> = {},
+  options: ServerOptions = {},
 ): Promise<TestApi> {
   const dir = mkdtempSync(join(tmpdir(), 'p80-api-'));
   const mediaRoot = join(dir, 'media');
@@ -34,7 +35,11 @@ export async function createTestApi(
     P80_LOG_LEVEL: 'silent',
     ...env,
   });
-  const server = await buildServer(config);
+  // No built client unless a test asks for one. Otherwise every suite would serve
+  // whatever `apps/web/dist` happens to hold, and the API's behaviour would depend on
+  // whether someone had run `pnpm build` — the exact coupling `dist` being gitignored
+  // is meant to avoid.
+  const server = await buildServer(config, { webRoot: join(dir, 'web'), ...options });
 
   return {
     server,

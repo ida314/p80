@@ -236,7 +236,24 @@ def transcribe(media_path: str, language: str, settings: Settings | None = None)
             "setup step, not a runtime download."
         ) from exc
 
-    model = WhisperModel(cfg.model_id, device=cfg.device, compute_type=cfg.compute_type)
+    try:
+        model = WhisperModel(
+            cfg.model_id, device=cfg.device, compute_type=cfg.compute_type
+        )
+    except Exception as exc:  # noqa: BLE001 — the backend's exception type is not ours
+        # Installed is not the same as usable. The most common way this fails is a build
+        # of the inference backend with no CUDA support being asked for `device=cuda`:
+        # `assert_device` above cannot see it, because that check is about whether a GPU
+        # is present and this is about whether this build can reach one. Left unhandled it
+        # surfaces as a 500 "transcription failed", which reads as a broken file rather
+        # than as a setup problem.
+        #
+        # Not retryable: nothing about waiting changes which libraries were compiled in.
+        raise AsrUnavailable(
+            f"Could not load the {cfg.model_id!r} model on device {cfg.device!r} with "
+            f"compute type {cfg.compute_type!r}: {exc}. Either the model is not "
+            f"installed, or this build cannot use that device — see docs/SETUP.md."
+        ) from exc
 
     # `language` is pinned rather than detected (ADR 0016 §3). Detection still runs, and
     # `info` carries what the model would have chosen — which is the evidence for the
