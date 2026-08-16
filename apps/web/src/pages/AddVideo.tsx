@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { SUPPORTED_MEDIA_EXTENSIONS } from '@p80/core/browser';
 import { ApiError, createInterest, createVideo, listInterests } from '../api.js';
 import { useResource } from '../hooks/useResource.js';
@@ -165,10 +165,15 @@ export function AddVideo() {
       </form>
 
       <p className="hint">
-        P80 transcribes the audio locally once the file is added — nothing is uploaded and
-        no request leaves this machine. If transcription is unavailable you can supply a
-        subtitle file instead, and a transcript you supply always wins over one P80
-        produced.
+        P80 transcribes the audio locally once the file is added — no request leaves the
+        machine P80 runs on. If transcription is unavailable you can supply a subtitle file
+        instead, and a transcript you supply always wins over one P80 produced.
+      </p>
+
+      <p className="hint">
+        This form is for a file that is already on the machine running P80. To send one from
+        the device you are reading this on, or to see what the library already contains,
+        use the <Link to="/library">media library</Link>.
       </p>
     </section>
   );

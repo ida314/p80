@@ -32,3 +32,32 @@ export function isJobStalled(args: {
 }): boolean {
   return args.status === 'pending' && args.elapsedMs > JOB_STALL_CEILING_MS;
 }
+
+/**
+ * How long to wait before re-sending a chunk that failed (ADR 0024).
+ *
+ * Pacing lives here for the same reason job polling does: it is a decision about how P80
+ * behaves, it is pure, and a number buried in a hook is a number nobody tests.
+ *
+ * The shape is different from `jobPollDelayMs` because the failure is different. A poll is
+ * asking "are you done yet" and the answer costs nothing; a chunk retry is re-sending eight
+ * megabytes over the link that just dropped, so the first retry is deliberately slow enough
+ * that a transient blip has ended, and growth is geometric rather than a fixed schedule —
+ * a laptop that closed its lid is not going to be back in 250 ms.
+ */
+const UPLOAD_RETRY_BASE_MS = 1000;
+const UPLOAD_RETRY_CEILING_MS = 30_000;
+
+export function uploadRetryDelayMs(attempt: number): number {
+  const n = Math.max(0, Math.floor(attempt));
+  return Math.min(UPLOAD_RETRY_BASE_MS * 2 ** n, UPLOAD_RETRY_CEILING_MS);
+}
+
+/**
+ * Attempts against a single chunk before the upload stops and shows the error.
+ *
+ * Bounded rather than infinite: an upload that cannot make progress should say so, because
+ * the session survives on the server and the user can resume it later. Retrying forever
+ * would hide a real refusal behind a progress bar that never moves.
+ */
+export const UPLOAD_MAX_CHUNK_ATTEMPTS = 6;

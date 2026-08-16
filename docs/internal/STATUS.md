@@ -10,8 +10,9 @@
 **Current stage:** Stage 3 — Manual learning-item prototype (code-complete, four manual checks)
 **Also open:** Stage 2 and 2b, code-complete, six manual browser checks outstanding
 **Milestone:** M1 — First vertical slice
-**Running at:** <http://127.0.0.1:5180> as systemd user services (ADR 0021)
-**Last updated:** 2026-08-15
+**Running at:** <http://127.0.0.1:5180> as systemd user services (ADR 0021), and at
+<https://p80.tail2e282c.ts.net> over Tailscale (ADR 0023)
+**Last updated:** 2026-08-16
 
 ---
 
@@ -202,6 +203,72 @@ required before `P80_NLP_BASE_URL` or `P80_VLLM_BASE_URL` may point off this mac
 that is a decision. ADR 0021 does not touch it; the installer only declines to start a
 local sidecar when the URL already points elsewhere.
 
+### Reaching P80 from the laptop (ADR 0023)
+
+**Done.** Outside a stage; noted here per §5.1. `tailscale serve` in front of `:5180`,
+`P80_TRUSTED_ORIGINS=https://p80.tail2e282c.ts.net` in `.env.local`.
+
+| What | State |
+|---|---|
+| ADR 0023 written and accepted | **done** |
+| `P80_TRUSTED_ORIGINS`, boot-tier, wildcards refused at startup | **done** |
+| CORS 403 names the permitted list; second startup warning | **done** |
+| `docs/SETUP.md` section | **done** |
+
+### Media library CRUD (ADR 0024)
+
+**Code-complete; five manual checks outstanding.** Outside a stage; noted here per §5.1.
+Upload from the laptop, browse the media root, delete what P80 wrote.
+
+| What | State |
+|---|---|
+| ADR 0024 written and accepted; `CLAUDE.md` rules 1/3/4 and `04-providers.md` §1 amended | **done** |
+| Migration 0003 `media_uploads` + Drizzle mirror | **done** |
+| `safeMediaFilename`, `uploadPartialPath`, `resolveMediaDir`, `nextChunkPlan` | **done** |
+| `POST/GET/PUT/DELETE /api/uploads*`, chunked and resumable | **done** |
+| `GET /api/library`, `DELETE /api/library/file` | **done** |
+| Web `/library` — dropzone, progress, resume, browser, two-step delete | **done** |
+| Media-policy scan rewritten as an exact writer inventory | **done** |
+| `smoke.sh` extended to 96 checks | **done** |
+| Manual checks M1–M5 | **not run** |
+
+**M1** upload a multi-hundred-MB file from the laptop over Tailscale. **M2** toggle Wi-Fi
+mid-upload and confirm it resumes rather than restarts. **M3** cancel and confirm no
+`.part` survives and no video row was created. **M4** browse and confirm `scp`'d files
+appear correctly marked. **M5** delete a referenced upload — refusal, then acknowledged
+delete, then the video still opens with its transcript and offers repair.
+
+`/home/dylan/Videos` is currently **empty**, which is why the ten older manual checks have
+never run. This is the feature that fixes that: M1 produces the German video file all of
+them have been waiting on, so do M1 first and then work through the backlog in one sitting.
+
+#### Three defects found, none of them caused by this work
+
+- **The media-policy static scan was never enforcing its own rule.** It only inspected
+  files that literally mention `P80_MEDIA_ROOT` or call `assertInsideMediaRoot`, so a
+  module taking `mediaRoot` as a parameter — the normal way to write one — was invisible to
+  it, and its primitive list omitted `writeSync`, `linkSync`, and `renameSync`. It would
+  have gone on passing while an upload writer was added. Now an exact inventory of all four
+  filesystem writers in production code, verified to fail when a fifth appears.
+- **Every Fastify framework refusal was reported as `500 INTERNAL_ERROR`.**
+  `toEnvelope` only recognises `P80Error`, so `FST_ERR_CTP_BODY_TOO_LARGE` (413) and
+  `FST_ERR_CTP_INVALID_MEDIA_TYPE` (415) both became "the server broke". Already true of
+  the transcript route's 4 MB limit; latent only because nothing had exceeded it. Handled
+  as a class in `setErrorHandler`, not one code at a time.
+- **`resolveMediaPath` resolves lexically, so a symlink out of the media root was
+  followed.** `..` was caught; `<root>/link-to-elsewhere/file.mp4` was not. Pre-existing
+  and unrelated to uploads, but the library browser turns it from a hand-built path into a
+  clickable entry. `realPathEscapesRoot` closes it on the read side.
+
+**2723 TypeScript tests** (up from 562 — most of the jump is a 2000-case fuzz property over
+`safeMediaFilename`), nine packages typechecking, `pnpm --filter @p80/web build` clean, and
+`smoke.sh` 93/96 against a scratch instance with the sidecar deliberately not started.
+
+**Not yet deployed.** The change is uncommitted and `deploy.sh` refuses a dirty tree;
+smoke ran against a throwaway API+worker on `:5199` with its own database and media root,
+so the installed services and `/home/dylan/Videos` were untouched and migration 0003 has
+**not** been applied to the live database.
+
 ## Blocked on
 
 Nothing blocks the remaining Stage 2 phases.
@@ -240,12 +307,15 @@ Nothing blocks the remaining Stage 2 phases.
 
 ## Next actions
 
-0. **Run all ten manual checks in one browser session** — Stage 2's M1–M5
+0. **Deploy ADR 0024, then run all fifteen manual checks in one browser session.** Commit
+   and `bash scripts/deploy.sh`, which snapshots the database before migration 0003
+   touches it. Then ADR 0024's M1 — upload a German video from the laptop — which finally
+   supplies the file the other ten have been blocked on: Stage 2's M1–M5
    (`plan/stage-02-ingestion.md`), Stage 2b's M6 (`plan/stage-02b-settings.md`), and
-   Stage 3's M1–M4 (`plan/stage-03-manual-items.md`). They need one German video file under
-   `P80_MEDIA_ROOT`, one folder holding no video, and — for the transcription half — the
-   ASR extra installed. Ten checks is the accumulated cost of three code-complete stages
-   nobody has sat in front of; doing them together is much cheaper than three sittings.
+   Stage 3's M1–M4 (`plan/stage-03-manual-items.md`). They also need one folder holding no
+   video, and — for the transcription half — the ASR extra installed. Fifteen checks is the
+   accumulated cost of four code-complete efforts nobody has sat in front of; doing them
+   together is much cheaper than four sittings.
 2. **Label ADR 0006 Pass A.** It blocked nothing in Stage 1 and blocks nothing in Stage 2,
    which is exactly why it keeps not happening — and Stage 4 cannot be tuned without it.
 3. Verify ADR 0001's readiness checklist as Stage 4 approaches. The resources are *named*,

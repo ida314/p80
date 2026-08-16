@@ -3,6 +3,7 @@ import { NavLink, Route, Routes } from 'react-router-dom';
 import { ApiError, getHealth, type Health } from './api.js';
 import { ErrorBoundary } from './ErrorBoundary.js';
 import { Today } from './pages/Today.js';
+import { Library } from './pages/Library.js';
 import { Videos } from './pages/Videos.js';
 import { AddVideo } from './pages/AddVideo.js';
 import { VideoDetail } from './pages/VideoDetail.js';
@@ -26,6 +27,7 @@ import { Settings } from './pages/Settings.js';
 const NAV = [
   { to: '/', label: 'Today', end: true },
   { to: '/videos', label: 'Videos' },
+  { to: '/library', label: 'Library' },
   { to: '/review', label: 'Review' },
   { to: '/settings', label: 'Settings' },
 ];
@@ -78,6 +80,7 @@ export function App() {
                 scoped by the `ErrorBoundary` above. `/videos/new` has to precede
                 `/videos/:id` conceptually but not textually — the router prefers the
                 static segment either way. */}
+            <Route path="/library" element={<Library />} />
             <Route path="/videos/new" element={<AddVideo />} />
             <Route path="/videos/:id" element={<VideoDetail />} />
             <Route path="/videos/:id/transcript" element={<VideoTranscript />} />

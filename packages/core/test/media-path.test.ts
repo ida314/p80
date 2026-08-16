@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   MEDIA_PATH_MESSAGES,
   SUPPORTED_MEDIA_EXTENSIONS,
   assertInsideMediaRoot,
   buildMediaDescriptor,
+  realPathEscapesRoot,
+  resolveMediaDir,
   resolveMediaPath,
 } from '../src/index.js';
 
@@ -193,5 +198,114 @@ describe('the descriptor a client renders', () => {
       startMs: -500,
     });
     expect(descriptor.startSeconds).toBe(0);
+  });
+});
+
+/**
+ * Directory containment, for the library browser (ADR 0024 §8).
+ *
+ * The same arithmetic as `resolveMediaPath` minus the extension check, because a path that
+ * names somewhere to *look* is a different question from one that names something to
+ * *play*. The alternative was letting the browse route do its own containment, and a second
+ * containment implementation is what this module's own doc comment warns about.
+ */
+describe('a directory may not escape the media root either', () => {
+  it.each(['../', '../../etc', 'german/../../outside', '/etc'])('rejects %s', (attempt) => {
+    expect(resolveMediaDir(attempt, ROOT).ok).toBe(false);
+  });
+
+  it('allows the root itself, which is the browser’s first screen', () => {
+    for (const input of ['', '.', './']) {
+      const result = resolveMediaDir(input, ROOT);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.relativePath).toBe('');
+        expect(result.absolutePath).toBe(ROOT);
+      }
+    }
+  });
+
+  it('accepts a subdirectory with no extension, which resolveMediaPath would refuse', () => {
+    const result = resolveMediaDir('german/lektionen', ROOT);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.relativePath).toBe('german/lektionen');
+    // The distinction that makes the second function necessary.
+    expect(resolveMediaPath('german/lektionen', ROOT).ok).toBe(false);
+  });
+
+  it('rejects the sibling-prefix case, same as the file resolver', () => {
+    expect(resolveMediaDir('../library-evil', ROOT).ok).toBe(false);
+  });
+});
+
+/**
+ * ADR 0024 §10 — the check `resolve` cannot make.
+ *
+ * `resolveMediaPath` is pure path arithmetic, which is what makes its hundred structural
+ * cases testable with no fixtures — and which means it can only reason about the string.
+ * `..` is caught because `resolve` collapses it lexically. A **symlink** is not: it
+ * resolves lexically to a path under the root, passes containment, and is then read
+ * straight through to bytes the root does not contain.
+ *
+ * This predates ADR 0024. It is tested here because the library browser is what turns it
+ * from a path someone would have to construct by hand into a clickable entry.
+ */
+describe('a symlink out of the library is not a way out of the library', () => {
+  let dir: string;
+  let root: string;
+  let outside: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'p80-media-link-'));
+    root = join(dir, 'library');
+    outside = join(dir, 'outside');
+    mkdirSync(root);
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'secret.mp4'), 'not yours');
+    writeFileSync(join(root, 'honest.mp4'), 'yours');
+  });
+
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('passes an ordinary file, so the check is not simply refusing everything', () => {
+    expect(realPathEscapesRoot(join(root, 'honest.mp4'), root)).toBe(false);
+    expect(() => assertInsideMediaRoot('honest.mp4', root)).not.toThrow();
+  });
+
+  it('catches a symlinked file whose lexical path is inside the root', () => {
+    symlinkSync(join(outside, 'secret.mp4'), join(root, 'innocent.mp4'));
+    // The lexical check is satisfied — this is exactly the gap.
+    expect(resolveMediaPath('innocent.mp4', root).ok).toBe(true);
+    expect(realPathEscapesRoot(join(root, 'innocent.mp4'), root)).toBe(true);
+    expect(() => assertInsideMediaRoot('innocent.mp4', root)).toThrow(/escapes_root_via_link/);
+  });
+
+  it('catches a symlinked directory, which is the easier mistake to make', () => {
+    symlinkSync(outside, join(root, 'elsewhere'));
+    expect(resolveMediaPath('elsewhere/secret.mp4', root).ok).toBe(true);
+    expect(() => assertInsideMediaRoot('elsewhere/secret.mp4', root)).toThrow(
+      /escapes_root_via_link/,
+    );
+  });
+
+  it('allows a symlink that stays inside the root', () => {
+    symlinkSync(join(root, 'honest.mp4'), join(root, 'alias.mp4'));
+    expect(realPathEscapesRoot(join(root, 'alias.mp4'), root)).toBe(false);
+    expect(() => assertInsideMediaRoot('alias.mp4', root)).not.toThrow();
+  });
+
+  it('tolerates a root that is itself a symlink, which an automounter makes ordinary', () => {
+    const aliasRoot = join(dir, 'library-alias');
+    symlinkSync(root, aliasRoot);
+    // Comparing a resolved path against an unresolved root would reject every file here.
+    expect(realPathEscapesRoot(join(aliasRoot, 'honest.mp4'), aliasRoot)).toBe(false);
+    expect(() => assertInsideMediaRoot('honest.mp4', aliasRoot)).not.toThrow();
+  });
+
+  it('says nothing about a path that does not exist', () => {
+    // Not a containment failure. The caller's own existence check produces the right
+    // error for a typo, and conflating the two would report "missing file" as a security
+    // refusal.
+    expect(realPathEscapesRoot(join(root, 'absent.mp4'), root)).toBeNull();
   });
 });

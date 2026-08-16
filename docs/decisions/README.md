@@ -46,8 +46,9 @@ Never delete an ADR. The value is in the record of what was considered.
 | [0021](0021-running-as-a-service.md) | How P80 runs when somebody is using it | systemd user units over containers; the API serves the built client; migrations and backups get their own units | Accepted |
 | [0022](0022-continuous-integration-and-deployment.md) | How a change reaches the running system | Hosted CI checks every push; deploying is a local pull-based script that snapshots, verifies, and rolls back code but never the database | Accepted |
 | [0023](0023-reverse-proxy-origins.md) | Reaching P80 from another device | `P80_TRUSTED_ORIGINS`, empty by default, boot-tier, wildcards refused; the proxy's access control is the whole security model | Accepted |
+| [0024](0024-uploading-media.md) | Putting a file into the library from the browser | Chunked resumable upload into one writable directory; rule 1 re-phrased as a mechanism; deletion bounded to what P80 wrote | Accepted |
 
-**All 23 ADRs are accepted as of 2026-08-16.** Two questions inside ADR 0011 remain open by
+**All 24 ADRs are accepted as of 2026-08-16.** Two questions inside ADR 0011 remain open by
 design and resolve by measurement at Stage 8; one inside ADR 0016 resolves at the close of
 Stage 2.
 

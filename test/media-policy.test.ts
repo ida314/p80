@@ -125,13 +125,52 @@ describe('nothing in the tree can obtain media', () => {
 });
 
 /**
- * Rule 3 — **P80 never copies media into its own storage.**
+ * Rule 3 — **P80 never copies media into its own storage**, and since ADR 0024,
+ * **`<P80_MEDIA_ROOT>/uploads/` is the only directory it writes media into.**
  *
- * This is the rule that replaced *never isolate or store an audio track*, and it is worth
- * more than its predecessor because it is mechanically checkable: the storage root is a
- * path P80 builds, so every write to it goes through a small number of helpers, and none
- * of them may produce a media file.
+ * ## Why this section was rewritten, and what was wrong with it
+ *
+ * The previous version asked: *does any file that mentions `P80_MEDIA_ROOT` or calls
+ * `assertInsideMediaRoot` also call a write primitive?* It passed continuously, and it
+ * would have gone on passing while an upload writer was added, for two independent
+ * reasons:
+ *
+ * 1. **It could only see writers that name the root.** A module that takes `mediaRoot` as
+ *    a parameter — which is how any well-factored writer would be written, and how
+ *    `services/media-uploads.ts` is written — never matched the filter at all. The one
+ *    mention in that file is inside a comment, which `codeOnly` strips.
+ * 2. **Its list of primitives had holes.** `writeSync`, `linkSync`, `renameSync`,
+ *    `appendFileSync`, and `cpSync` were all absent, so even a file it *did* look at could
+ *    write freely.
+ *
+ * A rule that cannot fail is not enforced, it is only described. So the question is
+ * inverted: instead of guessing which files are media-aware, **every filesystem writer in
+ * production code is enumerated**, and the list must match exactly. There are four. A new
+ * one — wherever it lives, whatever it calls the root — fails this test and has to justify
+ * itself here, in writing, before it can land.
  */
+
+/** Every way to put bytes on disk or move them about. Deliberately over-broad: a false
+ *  positive costs one line in the inventory below, and a false negative costs the rule. */
+const FS_WRITE_PRIMITIVES =
+  /\b(createWriteStream|writeFileSync|writeFile|appendFileSync|appendFile|copyFileSync|copyFile|cpSync|mkdirSync|mkdir|writeSync|linkSync|symlinkSync|renameSync|rename|rmSync|unlinkSync|truncateSync|ftruncateSync)\s*\(/;
+
+/**
+ * The complete inventory of production code that writes to the filesystem, and what each
+ * one is permitted to write. Keep the justifications: the list is only useful if a reader
+ * can tell at a glance that none of these is a media copy.
+ */
+const SANCTIONED_WRITERS: Readonly<Record<string, string>> = {
+  // Transcripts into `P80_STORAGE_PATH`, at a path built from ULIDs (spec §7.2).
+  'apps/api/src/routes/transcript.ts': 'uploaded transcript text, into the storage root',
+  // ADR 0024. The single writer into the media root, bounded to `uploads/`.
+  'apps/api/src/services/media-uploads.ts': 'uploaded media, into <media root>/uploads/',
+  // `VACUUM INTO` plus retention pruning of its own snapshots.
+  'packages/database/src/backup.ts': 'database snapshots, into the backup directory',
+  // Creates the directory holding the SQLite file.
+  'packages/database/src/client.ts': 'the database directory',
+};
+
 describe('no media is written into P80 storage', () => {
   it('builds no storage path with a media or audio extension', () => {
     const storage = readFileSync(join(ROOT, 'packages/core/src/storage.ts'), 'utf8');
@@ -155,21 +194,95 @@ describe('no media is written into P80 storage', () => {
     expect(codeOnly(mediaPath)).not.toContain('P80_STORAGE_PATH');
   });
 
-  it('never writes a file whose path came from the media root', () => {
+  /**
+   * The load-bearing assertion. **Equality, not containment** — so this fails when a new
+   * writer appears *and* when a sanctioned one is deleted, which is what stops the list
+   * from quietly becoming stale in either direction.
+   */
+  it('has exactly the filesystem writers it has agreed to have', () => {
     // Production code only. `apps/api/test/helpers.ts` writes fixture media into a temp
     // root on purpose, which is a test arranging a state, not P80 storing media.
-    const files = ['apps', 'packages']
+    const writers = ['apps', 'packages']
+      .flatMap((d) => sourceFiles(join(ROOT, d)))
+      .filter((f) => !/[/\\](test|tests|__tests__)[/\\]/.test(f))
+      .filter((file) => FS_WRITE_PRIMITIVES.test(codeOnly(readFileSync(file, 'utf8'))))
+      .map((f) => f.slice(ROOT.length + 1))
+      .sort();
+
+    expect(writers).toEqual(Object.keys(SANCTIONED_WRITERS).sort());
+  });
+
+  /**
+   * Rule 3's actual subject, and the one claim here that carries **no exceptions at all**.
+   *
+   * An upload produces the only server-side copy of a file, which is why the rule had to
+   * be reworded rather than simply reasserted. What stayed absolute is duplicating a file
+   * P80 already holds — a cache, a transcode, a decoded audio track. There is no
+   * legitimate reason for any of these to appear anywhere, so unlike the inventory above
+   * this test has no allowlist to grow.
+   */
+  it('duplicates a file it already holds nowhere in the tree', () => {
+    const files = ['apps', 'packages', 'services', 'scripts']
       .flatMap((d) => sourceFiles(join(ROOT, d)))
       .filter((f) => !/[/\\](test|tests|__tests__)[/\\]/.test(f));
-    const offenders = files.filter((file) => {
-      const source = codeOnly(readFileSync(file, 'utf8'));
-      if (!source.includes('P80_MEDIA_ROOT') && !source.includes('assertInsideMediaRoot')) {
-        return false;
-      }
-      // A module that resolves a media path may read it and must never write near it.
-      return /createWriteStream|writeFileSync|writeFile\(|copyFile|mkdirSync/.test(source);
-    });
-    expect(offenders.map((f) => f.slice(ROOT.length + 1))).toEqual([]);
+
+    for (const primitive of ['copyFileSync', 'copyFile', 'cpSync', 'shutil.copy']) {
+      const offenders = files.filter((file) =>
+        new RegExp(`\\b${primitive.replace('.', '\\.')}\\s*\\(`).test(
+          codeOnly(readFileSync(file, 'utf8')),
+        ),
+      );
+      expect(offenders.map((f) => f.slice(ROOT.length + 1))).toEqual([]);
+    }
+  });
+});
+
+/**
+ * Rule 4's companion, added by ADR 0024 — **a filename is untrusted input too, and it
+ * never becomes a path.**
+ *
+ * The upload feature is the first thing in P80 that takes a name from a user and creates a
+ * file from it. Two structural claims make that safe, and both are checkable here.
+ */
+describe('an uploaded filename never becomes a path', () => {
+  const coreUploads = codeOnly(
+    readFileSync(join(ROOT, 'packages/core/src/media-uploads.ts'), 'utf8'),
+  );
+  const apiUploads = codeOnly(
+    readFileSync(join(ROOT, 'apps/api/src/services/media-uploads.ts'), 'utf8'),
+  );
+  const uploadRoutes = codeOnly(readFileSync(join(ROOT, 'apps/api/src/routes/uploads.ts'), 'utf8'));
+
+  it('builds the partial path from a generated id, and asserts it', () => {
+    // The same guarantee `storage.ts` makes for transcripts: traversal is impossible
+    // because of an alphabet, not because of a filter.
+    expect(coreUploads).toContain('assertUlid');
+  });
+
+  it('validates a proposed name with the resolver rather than trusting the sanitiser', () => {
+    // `safeMediaFilename` proposes; `resolveMediaPath` disposes. If the writer stopped
+    // calling the resolver, the sanitiser would silently become the security boundary.
+    expect(apiUploads).toContain('resolveMediaPath');
+  });
+
+  it('moves the finished file with link, never rename', () => {
+    // `rename(2)` overwrites an existing destination silently. Using it here would not
+    // merely lose a race, it would destroy a file and report success.
+    expect(apiUploads).toContain('linkSync');
+    expect(apiUploads).not.toMatch(/\brenameSync\s*\(/);
+  });
+
+  it('accepts no field that could name a remote source', () => {
+    // Rule 1's regression, and the shape it would take: an upload body that took a URL
+    // would turn a push into a pull without anything else in the system changing.
+    const body = uploadRoutes.slice(
+      uploadRoutes.indexOf('createUploadBody'),
+      uploadRoutes.indexOf('});', uploadRoutes.indexOf('createUploadBody')),
+    );
+    expect(body.length).toBeGreaterThan(0);
+    for (const field of ['url', 'sourceUrl', 'href', 'uri', 'link', 'remote']) {
+      expect(body).not.toMatch(new RegExp(`\\b${field}\\s*:`, 'i'));
+    }
   });
 });
 

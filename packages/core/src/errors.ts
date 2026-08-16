@@ -108,6 +108,49 @@ export const ERROR_CODES = {
    *  confirmation gate rather than a failure — `acknowledgeOrphans: true` proceeds.
    *  `details` carries the counts. Same shape as `TRANSCRIPT_ALREADY_EXISTS`. */
   MEDIA_ROOT_WOULD_ORPHAN: 'MEDIA_ROOT_WOULD_ORPHAN',
+
+  // --- Media library uploads (ADR 0024) ---
+  /** No session with that id — never created, already settled and pruned, or reaped after
+   *  its expiry. The client's stored id is stale and it should start again. */
+  UPLOAD_NOT_FOUND: 'UPLOAD_NOT_FOUND',
+  /** A chunk against a session that has completed, aborted, or failed. Distinct from
+   *  `UPLOAD_NOT_FOUND` because the answer is different: the bytes went somewhere, and
+   *  `GET /api/uploads/:id` will say where. */
+  UPLOAD_NOT_IN_PROGRESS: 'UPLOAD_NOT_IN_PROGRESS',
+  /** The offset is not where the file currently ends. `details.expectedOffset` is the
+   *  whole point: this is a **resume instruction**, not just a refusal, and a client that
+   *  reads it recovers without asking anything further. */
+  UPLOAD_OFFSET_MISMATCH: 'UPLOAD_OFFSET_MISMATCH',
+  /** Completion asked for before every byte arrived. `details` carries both numbers, so
+   *  the client can resume from the difference rather than restarting. */
+  UPLOAD_INCOMPLETE: 'UPLOAD_INCOMPLETE',
+  /** Over `MAX_UPLOAD_BYTES` at session creation, or a chunk that would write past the
+   *  declared size. Also what Fastify's own body-limit refusal is translated into, so an
+   *  over-large request is a 413 rather than the 500 a raw framework error becomes. */
+  UPLOAD_TOO_LARGE: 'UPLOAD_TOO_LARGE',
+  /** Not enough free space for the declared size, or `ENOSPC` mid-write. Retryable and
+   *  honestly so: strict-append means nothing already received is lost, so freeing space
+   *  and resuming genuinely works. */
+  UPLOAD_STORAGE_FULL: 'UPLOAD_STORAGE_FULL',
+  /** The write did not complete and the partial file was rewound to the last known-good
+   *  offset. Retryable, because the session is intact. */
+  UPLOAD_WRITE_FAILED: 'UPLOAD_WRITE_FAILED',
+  /** `P80_MEDIA_ROOT` was edited while this upload was in flight (ADR 0019 makes it
+   *  live-editable). The partial is under the old root and finishing would move it across
+   *  filesystems into a library the user has since left. Refused rather than guessed. */
+  UPLOAD_ROOT_CHANGED: 'UPLOAD_ROOT_CHANGED',
+  /** A delete against a file one or more videos still reference. `details.videos` names
+   *  them, and `acknowledgeVideos: true` proceeds — the same confirmation shape as
+   *  `MEDIA_ROOT_WOULD_ORPHAN`. Nothing cascades: the videos are marked missing, which is
+   *  ADR 0018 §3's repairable state. */
+  MEDIA_FILE_IN_USE: 'MEDIA_FILE_IN_USE',
+  /** A delete aimed outside `<P80_MEDIA_ROOT>/uploads/`. P80 deletes what P80 wrote and
+   *  nothing else (ADR 0024 §5); a file the user put there is theirs. */
+  MEDIA_DELETE_REFUSED: 'MEDIA_DELETE_REFUSED',
+  /** The endpoint has no parser for the content type sent. Almost always a client bug,
+   *  and reported as one — before ADR 0024 the framework's own refusal was flattened into
+   *  `INTERNAL_ERROR`, which said P80 broke when the request was simply not accepted. */
+  UNSUPPORTED_MEDIA_TYPE: 'UNSUPPORTED_MEDIA_TYPE',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -187,9 +230,17 @@ export class P80Error extends Error {
   }
 
   /** 413 — over a declared limit. `details` always names the limit and the actual value,
-   *  because "too large" without a number is not actionable. */
-  static tooLarge(message: string, details?: Record<string, unknown>): P80Error {
-    return new P80Error(ERROR_CODES.TRANSCRIPT_TOO_LARGE, message, {
+   *  because "too large" without a number is not actionable.
+   *
+   *  The code is a parameter and defaults to the transcript one, which is what it
+   *  hardcoded when transcripts were the only thing with a size limit. An upload that
+   *  reported `TRANSCRIPT_TOO_LARGE` would send a client looking for a transcript. */
+  static tooLarge(
+    message: string,
+    details?: Record<string, unknown>,
+    code: ErrorCode = ERROR_CODES.TRANSCRIPT_TOO_LARGE,
+  ): P80Error {
+    return new P80Error(code, message, {
       statusCode: 413,
       ...(details ? { details } : {}),
     });

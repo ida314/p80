@@ -11,6 +11,7 @@ export * from './logger.js';
 export * from './media.js';
 export * from './media-path.js';
 export * from './media-root.js';
+export * from './media-uploads.js';
 export * from './paths.js';
 export * from './polling.js';
 export * from './scheduler.js';

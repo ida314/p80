@@ -133,23 +133,39 @@ adapter, recorded so they are not rediscovered:
   independence means the interface does not preclude a provider; it does not make one
   possible where there is no lawful programmatic seek.
 
-### Hard media rules (ADR 0015)
+### Hard media rules (ADR 0015, amended by ADR 0024)
 
 <!-- RESOLVED (ADR 0015): these replace spec §8 and §38.8's five rules, which were written
      against embedded YouTube. The prohibitions that had a subject were kept; the two that
      described the old playback surface were deleted along with it. -->
 
+<!-- RESOLVED (ADR 0024): rule 1 was phrased as an outcome ("how a file arrived on disk")
+     while rule 2 was phrased as a mechanism ("no outbound request"). That difference was
+     never considered — under embedded YouTube the outcome and the mechanism were the same
+     event. Rule 1 now says what it has always meant, so that a user pushing their own
+     bytes over the API is permitted for media exactly as it already was for transcripts. -->
+
 These are not negotiable and no ticket may relax them without a policy review recorded in
 `docs/decisions/`:
 
 1. **P80 never acquires media.** No downloader, no stream extraction, no URL that resolves
-   to media bytes. How a file arrived on disk is outside the system.
+   to media bytes — **P80 makes no outbound request to obtain a file**. It accepts one the
+   user hands it: a path already under `P80_MEDIA_ROOT`, or bytes the user's own browser
+   pushes into `<P80_MEDIA_ROOT>/uploads/`. Both are pushes; neither leaves the machine.
+   Where the user got the file is outside the system.
 2. **P80 makes no outbound request to obtain a transcript.** ASR is local (ADR 0016);
    upload is user-supplied. Neither path leaves the machine.
 3. **P80 never copies media into its own storage.** It holds a reference and reads through
-   it. The storage root holds transcripts and derived artifacts, never media.
+   it. An upload produces the *only* server-side copy of a file; what stays forbidden is a
+   **second** copy of one P80 already holds — a cache, a transcode, a decoded audio track.
+   The storage root holds transcripts and derived artifacts, **never media, including a
+   partially received upload**. `<P80_MEDIA_ROOT>/uploads/` is the only directory P80
+   writes media into, and the only one it deletes from.
 4. **A media path is untrusted input.** It resolves under `P80_MEDIA_ROOT` or it is
-   rejected — never sanitised into something acceptable.
+   rejected — never sanitised into something acceptable. **So is a filename, and it never
+   becomes a path.** The partial file is named from a generated id; a proposed final name
+   is *validated* by `resolveMediaPath` rather than trusted, so a hole in the name
+   sanitiser is a containment failure rather than a write outside the root.
 
 The old rule 2, *never isolate or store an audio track*, is **deleted**. It existed to stop
 stream extraction becoming an audio-download path by increments, and with user-supplied

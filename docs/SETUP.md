@@ -273,9 +273,12 @@ authenticates the device, terminates TLS, and forwards to `127.0.0.1:5180`. P80 
 binding loopback; the proxy is what listens.
 
 **P80 has no authentication of any kind.** Accounts are a non-goal, so whatever can reach
-the API can read and change everything in it. The proxy's access control is the entire
-security model. Restrict it to your own devices, and do not put P80 on the public internet —
-not through a public tunnel, not through a port forward on a router.
+the API can read and change everything in it — and since ADR 0024 that includes **writing
+files into your media library and deleting the ones P80 put there**. Bounded to a single
+`uploads` folder, to the media formats P80 plays, and to a size cap, but a real capability
+rather than a theoretical one. The proxy's access control is the entire security model.
+Restrict it to your own devices, and do not put P80 on the public internet — not through a
+public tunnel, not through a port forward on a router.
 
 With [Tailscale](https://tailscale.com), which needs MagicDNS and HTTPS certificates enabled
 on the tailnet:
@@ -311,6 +314,24 @@ ssh -L 5180:127.0.0.1:5180 <host>    # then open http://127.0.0.1:5180
 ```
 
 That works untouched, and needs the tunnel up on every client device.
+
+### Uploading media from the browser (ADR 0024)
+
+Once P80 is reachable from a second device, the **Library** page will send a video file
+from that device into `<P80_MEDIA_ROOT>/uploads/` and add it — which is the only way to get
+a file into the library from a machine that is not the one P80 runs on, short of copying it
+across yourself.
+
+Files are sent in pieces of a few megabytes, so a dropped connection resumes from where it
+stopped rather than starting over, and **no single request is large**. That matters if you
+put something other than a mesh VPN in front of P80: `tailscale serve` passes bodies through
+without a size limit, but nginx caps request bodies at one megabyte by default
+(`client_max_body_size`), and a proxy that refuses a chunk will refuse every chunk. If
+uploads fail immediately while the rest of P80 works, that limit is the first thing to
+check.
+
+`uploads` is the only directory P80 writes media into, and the only one it will delete
+from. Anything you copy in yourself is listed and playable, and P80 will not remove it.
 
 ## Updating an installed P80 (ADR 0022)
 

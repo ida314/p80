@@ -244,6 +244,92 @@ Response shapes for this surface are defined once, as Zod schemas in
 web client. The spec gives paths but no bodies; hand-mirroring them in the client drifts
 silently.
 
+## 3a. Media library and uploads <!-- ADDED (ADR 0024) -->
+
+Two surfaces that only exist because the browser and the media library can be on different
+machines (ADR 0023). Neither changes what a video *is*: an upload ends by calling the same
+code `POST /api/videos` calls, and returns the identical `202 { video, jobId }`.
+
+### Browsing
+
+**`GET /api/library?path=&limit=&cursor=`** lists **one directory level** of
+`P80_MEDIA_ROOT`. `path` is media-root-relative and empty means the root; a path that
+escapes is `400 INVALID_MEDIA_PATH` and one that does not exist is
+`404 MEDIA_FILE_NOT_FOUND`.
+
+Each entry carries `kind` (`file` | `directory` | `symlink`), `supported`, the `video` that
+already references it or null, `canAdd`, and `deletable`. Three rules about what appears:
+
+- **Symlinks are reported, never followed.** Following one would present a file outside the
+  root as an ordinary library entry.
+- **Dotfiles are omitted**, which is also what keeps the in-flight `.p80-partial` directory
+  out of the listing without a special case.
+- **Unsupported extensions are shown, marked `supported: false`.** Hiding a file the user
+  put there produces "where did my file go"; showing it inert explains itself.
+
+Not recursive, because a recursive walk is unbounded work per request on a library that may
+be hundreds of gigabytes. `truncated` says when `limit` cut the listing short. The cursor is
+an offset into a sorted listing, so a directory that changes between pages shifts it —
+acceptable for a personal library, and stated here so nobody builds a stable cursor for it.
+
+### Uploading
+
+A **session**, not a request:
+
+```
+POST   /api/uploads                        201 { id, filename, sizeBytes, receivedBytes, chunkBytes, … }
+GET    /api/uploads                        200 { uploads, chunkBytes, maxUploadBytes }
+GET    /api/uploads/:id                    200 (the resume query)
+PUT    /api/uploads/:id/chunk?offset=N     200 (raw body; returns the whole session)
+POST   /api/uploads/:id/complete           202 { video, jobId, status }
+DELETE /api/uploads/:id                    200 { deleted, discardedBytes }
+```
+
+`sizeBytes` is declared at creation. That is the price of a resumable protocol and it buys
+three things: a free-space and size-cap refusal before a byte is written, progress as a
+number rather than a guess, and a completion that can tell *finished* from *truncated*.
+
+**`chunkBytes` is served, not a client constant.** The right value depends on the reverse
+proxy in front of P80 rather than on anything the browser knows, so a hardcoded copy would
+be a second source of truth that drifts.
+
+**The chunk `PUT` is the second exception to §1's envelope** — the request side, where
+`GET /api/videos/:id/media` is the response side. Its body is `application/octet-stream`,
+and the parser for that type is registered in an encapsulated scope so it reaches this route
+and no other. Errors still use the envelope.
+
+**Strict append.** `offset` must equal `receivedBytes`, or `409 UPLOAD_OFFSET_MISMATCH`
+carrying `details.expectedOffset` — a resume instruction rather than only a refusal. One
+deliberate exception: a chunk lying entirely *below* `receivedBytes` returns `200` and
+writes nothing, because that is what a retry after a lost response looks like and refusing
+it would let one dropped acknowledgement wedge a correct client.
+
+### Deleting
+
+**`DELETE /api/library/file?path=&acknowledgeVideos=`** removes a file **under `uploads/`
+only** — P80 deletes what P80 wrote, and anything else is `403 MEDIA_DELETE_REFUSED`.
+
+Query parameters rather than a body, because some reverse proxies strip a body from a
+DELETE and a confirmation flag that vanishes in transit would turn a refusal into an
+unacknowledged deletion.
+
+If any video references the file the first call is `409 MEDIA_FILE_IN_USE` naming them, and
+only a second call with `acknowledgeVideos=true` proceeds — the shape
+`MEDIA_ROOT_WOULD_ORPHAN` and the transcript `replace` flag already use. **Nothing
+cascades**: each referencing video is marked `media_missing`, which is ADR 0018 §3's
+repairable dangling link, and `media_path` is deliberately left in place so the UI can name
+the file that is missing.
+
+Error codes added by ADR 0024: `UPLOAD_NOT_FOUND` (404), `UPLOAD_NOT_IN_PROGRESS` (409),
+`UPLOAD_OFFSET_MISMATCH` (409, `details.expectedOffset`), `UPLOAD_INCOMPLETE` (409),
+`UPLOAD_TOO_LARGE` (413), `UPLOAD_STORAGE_FULL` (507, retryable),
+`UPLOAD_WRITE_FAILED` (500, retryable), `UPLOAD_ROOT_CHANGED` (409),
+`MEDIA_FILE_IN_USE` (409), `MEDIA_DELETE_REFUSED` (403),
+`UNSUPPORTED_MEDIA_TYPE` (415).
+
+A bad path reuses `INVALID_MEDIA_PATH` rather than gaining a code of its own, which is what
+keeps one containment story rather than two.
+
 ## 4. Candidates
 
 A candidate is a **promoted** observed unit (ADR 0008), so this surface is a *queue*, not

@@ -12,6 +12,7 @@ import {
   toEnvelope,
   trustedOrigins,
   type Config,
+  type ErrorCode,
 } from '@p80/core';
 import { ensureProfile, migrate, openDatabase, type DatabaseHandle } from '@p80/database';
 import {
@@ -23,12 +24,39 @@ import { createFastify, type App } from './app.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerItemRoutes } from './routes/items.js';
 import { registerJobRoutes } from './routes/jobs.js';
+import { registerLibraryRoutes } from './routes/library.js';
 import { registerProfileRoutes } from './routes/profile.js';
 import { registerReviewRoutes } from './routes/review.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerTranscriptRoutes } from './routes/transcript.js';
+import { registerUploadRoutes } from './routes/uploads.js';
 import { registerVideoRoutes } from './routes/videos.js';
+
+/**
+ * Fastify's own refusal codes, mapped to P80's vocabulary.
+ *
+ * Only the ones with a meaningful distinction. Anything else falls back to `BAD_REQUEST`
+ * with the framework code in `details`, which keeps the envelope honest without inventing
+ * a P80 error code for every internal Fastify condition.
+ */
+const FRAMEWORK_ERROR_CODES: Readonly<Record<string, ErrorCode>> = {
+  FST_ERR_CTP_BODY_TOO_LARGE: ERROR_CODES.UPLOAD_TOO_LARGE,
+  FST_ERR_CTP_INVALID_MEDIA_TYPE: ERROR_CODES.UNSUPPORTED_MEDIA_TYPE,
+  FST_ERR_CTP_EMPTY_JSON_BODY: ERROR_CODES.BAD_REQUEST,
+  FST_ERR_CTP_INVALID_JSON_BODY: ERROR_CODES.BAD_REQUEST,
+};
+
+function frameworkMessage(code: string): string {
+  switch (code) {
+    case 'FST_ERR_CTP_BODY_TOO_LARGE':
+      return 'That request body is larger than this endpoint accepts.';
+    case 'FST_ERR_CTP_INVALID_MEDIA_TYPE':
+      return 'This endpoint does not accept that content type.';
+    default:
+      return 'That request could not be read.';
+  }
+}
 
 export interface ApiServer {
   app: App;
@@ -115,6 +143,43 @@ export async function buildServer(
       return reply.status(400).send(validation.toEnvelope());
     }
 
+    /**
+     * Fastify rejects some requests itself, before any handler runs — a body over the
+     * limit, a content type no parser claims, an empty JSON body. Those errors carry a
+     * perfectly good 4xx `statusCode` and are **not** `P80Error`s, so `toEnvelope`'s
+     * catch-all flattened every one of them to `500 INTERNAL_ERROR`.
+     *
+     * That is wrong in a way that matters: it tells the user P80 broke when what happened
+     * is that they sent something P80 declines to accept, and it hides a client bug behind
+     * a server one. It was already true of the transcript route's 4 MB limit and went
+     * unnoticed only because nothing had ever exceeded it.
+     *
+     * Handled as a class rather than one code at a time, because the next framework
+     * refusal added upstream should not need this branch edited to be reported honestly.
+     */
+    const framework = error as { code?: string; statusCode?: number };
+    if (
+      typeof framework.code === 'string' &&
+      framework.code.startsWith('FST_ERR_') &&
+      typeof framework.statusCode === 'number' &&
+      framework.statusCode >= 400 &&
+      framework.statusCode < 500
+    ) {
+      const translated = new P80Error(
+        FRAMEWORK_ERROR_CODES[framework.code] ?? ERROR_CODES.BAD_REQUEST,
+        frameworkMessage(framework.code),
+        {
+          statusCode: framework.statusCode,
+          details: { frameworkCode: framework.code },
+        },
+      );
+      request.log.warn(
+        { err: error, url: request.url, code: framework.code },
+        'request refused before reaching a handler',
+      );
+      return reply.status(framework.statusCode).send(translated.toEnvelope());
+    }
+
     const { status, body } = toEnvelope(error);
     if (status >= 500) {
       request.log.error({ err: error }, 'unhandled error');
@@ -183,6 +248,11 @@ export async function buildServer(
   await registerVideoRoutes(app, { handle, config });
   await registerMediaRoutes(app, { handle, config });
   await registerTranscriptRoutes(app, { handle, config });
+  // ADR 0024. Both need `config` for the media root, and `uploads` registers the only
+  // `application/octet-stream` parser in P80 — inside its own encapsulated scope, so it
+  // cannot reach the JSON routes above.
+  await registerUploadRoutes(app, { handle, config });
+  await registerLibraryRoutes(app, { handle, config });
   // Stage 3. Neither needs `config`: the media root is reached through the media route,
   // and a review payload carries an API URL rather than a path (ADR 0015).
   await registerItemRoutes(app, { handle });

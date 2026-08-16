@@ -20,9 +20,14 @@ export function Videos() {
     <section className="panel">
       <div className="videos__head">
         <h1>Videos</h1>
-        <Link className="button-link" to="/videos/new">
-          Add a video
-        </Link>
+        <span className="library__actions">
+          <Link className="button-link" to="/library">
+            Library
+          </Link>
+          <Link className="button-link" to="/videos/new">
+            Add a video
+          </Link>
+        </span>
       </div>
 
       <input

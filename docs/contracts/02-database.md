@@ -513,6 +513,41 @@ recommendations. `recommendations.status` alone cannot carry this.
 compared. Scattering them across `videos` and `candidates` makes "reprocess everything
 extracted with prompt v3" unanswerable.
 
+### `media_uploads` <!-- ADDED (ADR 0024, migration 0003) -->
+`id`, `profile_id`, `original_filename`, `filename`, `size_bytes`, `received_bytes`,
+`status`, `media_root`, `media_path`, `video_id`, `job_id`, `title`, `interests_json`,
+`transcribe`, `error_json`, `created_at`, `updated_at`, `expires_at`
+
+`status ∈ {in_progress, completed, aborted, failed}`.
+
+**Why a table rather than the partial file's size on disk.** Progress could be read off the
+`.part` file, and five other things could not. The decisive one is `original_filename`: the
+browser sends a name, completion needs it, and the only place to keep it without a table is
+*in the partial file's own name* — which puts untrusted input back inside a path, the one
+thing ADR 0024 must not do. So the name lives in a column and the partial is named from a
+ULID. This is the argument `transcript_files.original_filename` already makes.
+
+The rest: `size_bytes`, without which completion cannot distinguish *finished* from
+*truncated* and creation has no figure to check free space against; `title` and
+`interests_json`, supplied at creation and consumed at completion; `expires_at` for the
+reaper; and a terminal `status`, so an aborted upload is distinguishable from a stalled one.
+
+**`received_bytes` is the authority, not the file.** The partial is truncated to it before
+every write, so a crash between writing bytes and updating the column leaves the file long
+and the row short, and the next chunk corrects it. Trusting the file instead has no
+correction available — a file longer than it should be is indistinguishable from a correct
+one.
+
+**`media_root` is absolute and stored**, unlike `videos.media_path` which is relative on
+purpose. ADR 0019 makes the root editable while P80 runs, so reading it per use — correct
+everywhere else — returns a *different answer* mid-upload, which would leave the partial
+under one root while completion moved it into another. Storing it turns that into a
+detectable refusal.
+
+`media_path` is null until the file is linked into `uploads/`, which is what makes a reaped
+row unambiguous. `video_id` is `ON DELETE SET NULL` rather than cascading: an upload record
+outliving its deleted video is the provenance the library screen wants.
+
 ---
 
 ## 3. Migration rules

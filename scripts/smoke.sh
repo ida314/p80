@@ -311,6 +311,92 @@ fi
 rm -rf "${media_root:?}/smoke"
 
 echo
+echo "media library and uploads (ADR 0024)"
+# The `curl`-only constraint (ADR 0007) is a real design constraint for this surface, and
+# this section is the proof it holds: a complete upload, end to end, with no browser.
+upload_name="smoke-upload-$(date +%s | tail -c 7).mp4"
+upload_body="$(printf 'P80 smoke upload payload')"
+upload_size="${#upload_body}"
+
+upload_id="$(curl -s -X POST -H 'content-type: application/json' \
+              -d "{\"filename\":\"${upload_name}\",\"sizeBytes\":${upload_size},\"transcribe\":false}" \
+              "${API}/api/uploads" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)"
+check "POST /api/uploads"            26 "${#upload_id}"
+check "nothing received yet"          0 "$(curl -s "${API}/api/uploads/${upload_id}" \
+                                            | grep -o '"receivedBytes":[0-9]*' | cut -d: -f2)"
+
+# Split so the protocol is actually exercised rather than a single-shot PUT wearing a
+# chunked protocol's clothes.
+head_bytes="${upload_body:0:10}"
+tail_bytes="${upload_body:10}"
+
+printf '%s' "${head_bytes}" > "${TMPDIR:-/tmp}/p80-smoke-chunk"
+check "PUT the first chunk"         200 "$(status -X PUT -H 'content-type: application/octet-stream' \
+                                            --data-binary "@${TMPDIR:-/tmp}/p80-smoke-chunk" \
+                                            "${API}/api/uploads/${upload_id}/chunk?offset=0")"
+# A replayed chunk is a SUCCESS, not a conflict: it is what a retry after a lost response
+# looks like, and refusing it would wedge a client that is behaving correctly.
+check "a replayed chunk is a no-op" 200 "$(status -X PUT -H 'content-type: application/octet-stream' \
+                                            --data-binary "@${TMPDIR:-/tmp}/p80-smoke-chunk" \
+                                            "${API}/api/uploads/${upload_id}/chunk?offset=0")"
+check "count did not double"         10 "$(curl -s "${API}/api/uploads/${upload_id}" \
+                                            | grep -o '"receivedBytes":[0-9]*' | cut -d: -f2)"
+check "a wrong offset is refused"   409 "$(status -X PUT -H 'content-type: application/octet-stream' \
+                                            --data-binary "@${TMPDIR:-/tmp}/p80-smoke-chunk" \
+                                            "${API}/api/uploads/${upload_id}/chunk?offset=99")"
+check "completing early is refused" 409 "$(status -X POST "${API}/api/uploads/${upload_id}/complete")"
+
+printf '%s' "${tail_bytes}" > "${TMPDIR:-/tmp}/p80-smoke-chunk"
+check "PUT the last chunk"          200 "$(status -X PUT -H 'content-type: application/octet-stream' \
+                                            --data-binary "@${TMPDIR:-/tmp}/p80-smoke-chunk" \
+                                            "${API}/api/uploads/${upload_id}/chunk?offset=10")"
+rm -f "${TMPDIR:-/tmp}/p80-smoke-chunk"
+
+upload_video="$(curl -s -X POST "${API}/api/uploads/${upload_id}/complete" \
+                 | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)"
+check "completion creates a video"   26 "${#upload_video}"
+
+# The round-trip claim: what comes back out is exactly what went in. Everything else in
+# this section is protocol; this is the part that says the protocol moved the right bytes.
+check "the bytes survived intact" "${upload_body}" \
+      "$(curl -s "${API}/api/videos/${upload_video}/media")"
+
+check "GET /api/library"            200 "$(status "${API}/api/library")"
+check "the upload is listed"       true "$(curl -s "${API}/api/library?path=uploads" \
+                                            | grep -c "\"name\":\"${upload_name}\"" \
+                                            | sed 's/^0$/false/; s/^[1-9][0-9]*$/true/')"
+check "and is marked as added"    false "$(curl -s "${API}/api/library?path=uploads" \
+                                            | grep -o '"canAdd":[a-z]*' | head -1 | cut -d: -f2)"
+
+# Deletion is bounded to what P80 wrote, and refuses once before it destroys anything.
+check "escaping the root refused"   400 "$(status -X DELETE \
+                                            "${API}/api/library/file?path=..%2F..%2Fetc%2Fpasswd.mp4")"
+check "outside uploads/ refused"    403 "$(status -X DELETE \
+                                            "${API}/api/library/file?path=${media_rel}")"
+check "a file in use is refused"    409 "$(status -X DELETE \
+                                            "${API}/api/library/file?path=uploads%2F${upload_name}")"
+check "acknowledged delete works"   200 "$(status -X DELETE \
+                                            "${API}/api/library/file?path=uploads%2F${upload_name}&acknowledgeVideos=true")"
+# Nothing cascaded: the video is still there and repairable (ADR 0018 3).
+check "the video still exists"      200 "$(status "${API}/api/videos/${upload_video}")"
+check "and is flagged for repair"  true "$(curl -s "${API}/api/videos/${upload_video}" \
+                                            | grep -o '"mediaMissing":[a-z]*' | cut -d: -f2)"
+
+# Rule 1's regression, in one line: an upload body that honoured a URL would turn a push
+# into a pull without anything else in the system changing.
+check "an upload takes no URL"      400 "$(status -X POST -H 'content-type: application/json' \
+                                            -d '{"url":"https://example.invalid/v.mp4","sizeBytes":10}' \
+                                            "${API}/api/uploads")"
+
+check "DELETE the uploaded video"   200 "$(status -X DELETE "${API}/api/videos/${upload_video}")"
+
+# The media root is the user's own library. Remove only this run's file, and take the
+# uploads directory only if it is empty — the user may have real uploads in there.
+rm -f "${media_root}/uploads/${upload_name}"
+rmdir "${media_root}/uploads/.p80-partial" 2>/dev/null || true
+rmdir "${media_root}/uploads" 2>/dev/null || true
+
+echo
 echo "media policy"
 # ADR 0015: the media route is the ONLY endpoint that serves bytes, and it is gone with the
 # video. Nothing else may produce media, and nothing may produce an isolated audio track.

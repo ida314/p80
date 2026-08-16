@@ -3,6 +3,7 @@ export * from './client.js';
 export * from './migrate.js';
 export * from './repositories/interests.js';
 export * from './repositories/items.js';
+export * from './repositories/media-uploads.js';
 export * from './repositories/jobs.js';
 export * from './repositories/profile.js';
 export * from './repositories/review.js';

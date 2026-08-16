@@ -58,7 +58,7 @@ describe('concurrent migration', () => {
           WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != '_migrations'`,
       )
       .get() as { n: number };
-    expect(tables.n).toBe(37);
+    expect(tables.n).toBe(38);
 
     const ledger = worker.sqlite
       .prepare('SELECT COUNT(*) AS n FROM _migrations')

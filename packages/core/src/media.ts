@@ -61,6 +61,7 @@ export type MediaPathRejection =
   | 'empty'
   | 'absolute'
   | 'escapes_root'
+  | 'escapes_root_via_link'
   | 'null_byte'
   | 'unsupported_extension'
   | 'too_long';
@@ -72,7 +73,71 @@ export const MEDIA_PATH_MESSAGES: Readonly<Record<MediaPathRejection, string>> =
   empty: 'A media path is required.',
   absolute: 'Give a path relative to the media library root, not an absolute path.',
   escapes_root: 'That path is outside the media library root.',
+  escapes_root_via_link:
+    'That path is inside the media library root but links to a file outside it. P80 reads only what is genuinely in the library.',
   null_byte: 'That path contains an illegal character.',
   unsupported_extension: `Supported formats are ${SUPPORTED_MEDIA_EXTENSIONS.join(', ')}.`,
   too_long: 'That path is too long.',
 };
+
+/**
+ * The one directory P80 writes media into (`CLAUDE.md` rule 3, ADR 0024 §2).
+ *
+ * Relative to `P80_MEDIA_ROOT`. It is a constant rather than a setting because the rule is
+ * what makes the mechanical check in `test/media-policy.test.ts` possible: "exactly one
+ * module writes, and it writes here". A configurable answer would make that unprovable.
+ */
+export const UPLOAD_DIRECTORY = 'uploads';
+
+/**
+ * How much of a file goes in one request.
+ *
+ * Server-chosen and served to the client in the upload session, so the browser holds no
+ * number the server also holds — the same reasoning that puts `control` and `editable` on
+ * the settings payload rather than in the page.
+ *
+ * 8 MiB is a compromise between two limits that pull opposite ways. Too large and a
+ * reverse proxy's body cap refuses it (nginx defaults to 1 MiB, so a client that cannot
+ * negotiate would fail everywhere), and a dropped connection costs more re-sending. Too
+ * small and a multi-gigabyte file becomes thousands of round trips, each paying the full
+ * request overhead over a VPN link.
+ */
+export const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The ceiling on a single upload.
+ *
+ * A constant rather than a setting, deliberately (ADR 0024). `CONFIG_KEYS` is a closed set
+ * with a guard test, and every key costs a tier decision and a documented reason. This
+ * exists to bound a runaway — a client that declares a nonsense size, or a mistyped file —
+ * not to be tuned. The guard that actually protects the disk is the free-space check at
+ * session creation, which knows the real number.
+ */
+export const MAX_UPLOAD_BYTES = 16 * 1024 * 1024 * 1024;
+
+/**
+ * What the client should send next, as a pure function.
+ *
+ * Extracted from the upload loop because `apps/web` has no test infrastructure and inventing
+ * one for this would be a larger decision than the feature. The same reasoning put job-poll
+ * pacing in `polling.ts`: the arithmetic that decides how P80 behaves is testable, and the
+ * React that renders it is not the interesting part.
+ *
+ * `receivedBytes` is always the server's number, never a count the client kept of what it
+ * sent — that is what makes an offset mismatch self-healing rather than a desynchronisation.
+ */
+export function nextChunkPlan(args: {
+  receivedBytes: number;
+  sizeBytes: number;
+  chunkBytes: number;
+}): { done: true } | { done: false; start: number; end: number } {
+  const { receivedBytes, sizeBytes, chunkBytes } = args;
+  if (receivedBytes >= sizeBytes) return { done: true };
+  // `end` is exclusive, matching `Blob.slice`. Clamping it is what makes the final chunk
+  // short rather than a request for bytes past the end of the file.
+  return {
+    done: false,
+    start: receivedBytes,
+    end: Math.min(receivedBytes + chunkBytes, sizeBytes),
+  };
+}

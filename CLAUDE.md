@@ -38,17 +38,27 @@ ADR.
 These come from product policy and legal constraints, not preference. Violating one is a
 defect regardless of how well it works.
 
-### Media (ADR 0015 — replaces spec §8, §38.8)
+### Media (ADR 0015 — replaces spec §8, §38.8; amended by ADR 0024)
 1. **P80 never acquires media.** No downloader, no stream extraction, no URL that resolves
-   to media bytes. How a file arrived on disk is outside the system. If a task seems to
-   require obtaining media, the task is wrong — stop and ask.
+   to media bytes — **P80 makes no outbound request to obtain a file.** It accepts one the
+   user hands it: a path already under `P80_MEDIA_ROOT`, or bytes the user's own browser
+   pushes into `<P80_MEDIA_ROOT>/uploads/` (ADR 0024). Both are pushes; neither leaves the
+   machine. Where the user got the file is outside the system. If a task seems to require
+   *obtaining* media, the task is wrong — stop and ask.
 2. **P80 makes no outbound request to obtain a transcript.** ASR is local (ADR 0016);
    upload is user-supplied. Neither path leaves the machine.
 3. **P80 never copies media into its own storage.** It holds a reference — a path plus a
-   content hash — and reads through it. `P80_STORAGE_PATH` holds transcripts and derived
-   artifacts, never media.
+   content hash — and reads through it. An upload produces the *only* server-side copy;
+   what stays forbidden is a **second** copy of a file P80 already holds — a cache, a
+   transcode, a decoded audio track. `P80_STORAGE_PATH` holds transcripts and derived
+   artifacts, **never media, including a partially received upload**.
+   **`<P80_MEDIA_ROOT>/uploads/` is the only directory P80 writes media into, and the only
+   one it deletes from.** `test/media-policy.test.ts` asserts that exactly one production
+   module writes there; a second one fails the build.
 4. **A media path is untrusted input.** It resolves under `P80_MEDIA_ROOT` or it is
-   rejected. Never sanitised into something acceptable.
+   rejected. Never sanitised into something acceptable. **So is a filename, and it never
+   becomes a path**: the partial file is named from a ULID, and a proposed final name is
+   *validated* by `resolveMediaPath` rather than trusted (ADR 0024 §4).
 
 The domain unit is a timed media source plus a transcript — an `.mp4` or equivalent — and
 everything file-specific stays behind `MediaSourceAdapter`. That interface earned its keep
@@ -176,7 +186,7 @@ records what each deletion costs. Do not reintroduce either as a hedge.
 
 ## 4. Stack
 
-All twenty-three ADRs in `docs/decisions/` are accepted. The stack below is settled, not
+All twenty-four ADRs in `docs/decisions/` are accepted. The stack below is settled, not
 provisional — check there for *why* before changing any of it.
 
 Two clients over one API, split by whether the surface needs media (ADR 0007):

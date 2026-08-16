@@ -51,6 +51,8 @@ const CONTRACTED_TABLES = [
   'transcript_corrections',
   'recommendation_feedback',
   'pipeline_versions',
+  // ADR 0024, migration 0003. Upload sessions in flight.
+  'media_uploads',
 ];
 
 let temp: TempDatabase;
@@ -85,11 +87,19 @@ describe('migrations', () => {
   it('is a no-op on re-run', () => {
     temp = createTempDatabase({ migrate: false });
     const first = migrate(temp.sqlite);
-    expect(first.applied).toEqual(['0001_initial.sql', '0002_local_media.sql']);
+    expect(first.applied).toEqual([
+      '0001_initial.sql',
+      '0002_local_media.sql',
+      '0003_media_uploads.sql',
+    ]);
 
     const second = migrate(temp.sqlite);
     expect(second.applied).toEqual([]);
-    expect(second.alreadyApplied).toEqual(['0001_initial.sql', '0002_local_media.sql']);
+    expect(second.alreadyApplied).toEqual([
+      '0001_initial.sql',
+      '0002_local_media.sql',
+      '0003_media_uploads.sql',
+    ]);
   });
 
   it('enforces foreign keys, so the cascade rules are not decorative', () => {

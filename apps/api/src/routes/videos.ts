@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import {
   ERROR_CODES,
-  INGEST_MEDIA_JOB_VERSION,
   P80Error,
   PROCESSING_STATUSES,
   TRANSCRIPT_STATUSES,
@@ -14,12 +13,9 @@ import {
 } from '@p80/core';
 import {
   createInterest,
-  createVideo,
   deleteInterest,
   deleteVideo,
-  enqueueJob,
   ensureProfile,
-  findByMediaPath,
   getRuntimeSettings,
   getVideo,
   listInterests,
@@ -30,6 +26,7 @@ import {
   type DatabaseHandle,
 } from '@p80/database';
 import type { App } from '../app.js';
+import { addVideoFromPath } from '../services/add-video.js';
 import { toVideoPayload } from '../services/video-payload.js';
 import { requireExists, requireMediaPath } from './media.js';
 
@@ -105,52 +102,22 @@ export async function registerVideoRoutes(
       const resolved = requireMediaPath(request.body.path, mediaRoot);
       requireExists(resolved.absolutePath, request.body.path);
 
-      // The boring duplicate, caught before it costs anything. ADR 0018's content-hash
-      // check catches the interesting one — the same file under two names — but only in
-      // the worker, after a full read. Without this, re-adding a path someone already
-      // added spends minutes hashing and transcribing before being discarded, which looks
-      // like a bug from the outside.
-      const already = findByMediaPath(handle, profile.id, resolved.relativePath);
-      if (already !== null) {
-        throw P80Error.conflict(
-          ERROR_CODES.DUPLICATE_VIDEO,
-          'You have already added this file.',
-          { videoId: already.id, path: resolved.relativePath },
-        );
-      }
-
-      const video = createVideo(handle, {
-        profileId: profile.id,
-        sourceType: 'local_media',
-        // `externalVideoId` omitted on purpose — the row gets `pending:<id>` until the
-        // ingest job hashes the bytes.
-        url: resolved.relativePath,
-        mediaPath: resolved.relativePath,
-        title: request.body.title ?? null,
-        targetLanguage: profile.targetLanguage,
-        speakerLabel: request.body.speakerLabel ?? null,
-        regionLabel: request.body.regionLabel ?? null,
-      });
-
-      if (request.body.interests.length > 0) {
-        setVideoInterests(handle, video.id, request.body.interests);
-      }
-
-      const job = enqueueJob(handle, 'INGEST_MEDIA', {
-        entityType: 'video',
-        entityId: video.id,
-        input: {
-          jobVersion: INGEST_MEDIA_JOB_VERSION,
-          videoId: video.id,
+      // The tail — duplicate check, insert, interests, job — is shared with
+      // `POST /api/uploads/:id/complete` (ADR 0024). The two arrive here by very different
+      // routes and do identical work from this point, and two copies would agree today and
+      // disagree the first time either changed.
+      return reply.status(202).send(
+        addVideoFromPath(handle, {
+          profileId: profile.id,
+          targetLanguage: profile.targetLanguage,
+          relativePath: resolved.relativePath,
+          title: request.body.title ?? null,
+          speakerLabel: request.body.speakerLabel ?? null,
+          regionLabel: request.body.regionLabel ?? null,
+          interests: request.body.interests,
           transcribe: true,
-        },
-      });
-
-      return reply.status(202).send({
-        video: toVideoPayload(handle, video),
-        jobId: job.id,
-        status: 'pending' as const,
-      });
+        }),
+      );
     },
   );
 

@@ -332,6 +332,117 @@ export const mediaRootPreflightResponse = z.object({
 });
 export type MediaRootPreflightPayload = z.infer<typeof mediaRootPreflightResponse>;
 
+/* ------------------------------------------------ media library and uploads (ADR 0024) */
+
+export const UPLOAD_STATUSES = ['in_progress', 'completed', 'aborted', 'failed'] as const;
+export type UploadStatus = (typeof UPLOAD_STATUSES)[number];
+
+/**
+ * An upload in flight, and the only thing a client needs in order to resume one.
+ *
+ * **`receivedBytes` is the server's count, and the client must treat it as authoritative.**
+ * A client that tracks what it has *sent* has a second source of truth, and the two diverge
+ * the first time a response is lost — which is precisely the case the protocol exists to
+ * survive. Every chunk response carries the whole session for that reason.
+ *
+ * **`chunkBytes` is here rather than in the client** for the same reason `control` and
+ * `editable` are on the settings payload: it is a server decision, and a hardcoded constant
+ * in the browser is a copy that drifts. Changing the chunk size is then one constant on one
+ * machine, which matters because the right value depends on the proxy in front of P80.
+ *
+ * No path is exposed. The final name cannot be known until completion — a collision can
+ * appear in between — and the client has no business learning where the library is.
+ */
+export const uploadSessionResponse = z.object({
+  id: z.string(),
+  /** The sanitised name P80 intends to use, for display while the upload runs. The name it
+   *  actually used arrives with the video, because a collision may change it. */
+  filename: z.string(),
+  /** As the browser sent it, for a message that names what the user picked. */
+  originalFilename: z.string(),
+  sizeBytes: z.number().int().nonnegative(),
+  receivedBytes: z.number().int().nonnegative(),
+  chunkBytes: z.number().int().positive(),
+  status: z.enum(UPLOAD_STATUSES),
+  /** Set once completion has created the video; null while bytes are still arriving. */
+  videoId: z.string().nullable(),
+  /** The `INGEST_MEDIA` job completion enqueued, so a client that reloaded can pick the
+   *  progress display back up without guessing. */
+  jobId: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+  expiresAt: z.number().int(),
+});
+export type UploadSessionPayload = z.infer<typeof uploadSessionResponse>;
+
+export const uploadListResponse = z.object({
+  uploads: z.array(uploadSessionResponse),
+  chunkBytes: z.number().int().positive(),
+  maxUploadBytes: z.number().int().positive(),
+});
+export type UploadListPayload = z.infer<typeof uploadListResponse>;
+
+export const uploadDeletedResponse = z.object({
+  deleted: z.literal(true),
+  /** Bytes thrown away, so the client can say what the cancellation cost rather than
+   *  pretending nothing happened. */
+  discardedBytes: z.number().int().nonnegative(),
+});
+export type UploadDeletedPayload = z.infer<typeof uploadDeletedResponse>;
+
+/**
+ * One entry in the media library listing.
+ *
+ * `video` is what makes browsing useful rather than decorative: it is the difference
+ * between a list of filenames and a list that says which of them P80 already knows about.
+ *
+ * `supported` is false for a file P80 cannot play. Such files are **listed anyway**,
+ * deliberately — hiding the `.avi` somebody copied in produces "where did my file go",
+ * while showing it greyed out explains itself.
+ */
+export const libraryEntryResponse = z.object({
+  name: z.string(),
+  /** Media-root-relative, and the exact string `POST /api/videos` will accept. */
+  path: z.string(),
+  kind: z.enum(['file', 'directory', 'symlink']),
+  sizeBytes: z.number().int().nonnegative().nullable(),
+  modifiedAt: z.number().int().nullable(),
+  supported: z.boolean(),
+  video: z
+    .object({ id: z.string(), title: z.string(), mediaMissing: z.boolean() })
+    .nullable(),
+  /** A playable file with no video row yet — the one-click add. */
+  canAdd: z.boolean(),
+  /** Only ever true under `uploads/`. P80 deletes what P80 wrote (ADR 0024 §5), so the
+   *  client renders no button for anything else rather than offering one that 403s. */
+  deletable: z.boolean(),
+});
+export type LibraryEntryPayload = z.infer<typeof libraryEntryResponse>;
+
+export const libraryListingResponse = z.object({
+  /** The directory being listed, media-root-relative. Empty string is the root. */
+  path: z.string(),
+  /** One level up, or null at the root. */
+  parent: z.string().nullable(),
+  entries: z.array(libraryEntryResponse),
+  /** True when `limit` cut the listing short. A directory that changes between pages
+   *  shifts the offset — acceptable for a personal library, and stated so nobody builds a
+   *  stable cursor for it. */
+  truncated: z.boolean(),
+  nextCursor: z.string().nullable(),
+});
+export type LibraryListingPayload = z.infer<typeof libraryListingResponse>;
+
+export const libraryDeleteResponse = z.object({
+  deleted: z.literal(true),
+  path: z.string(),
+  /** Videos left pointing at a file that is now gone. Not an error and not a cascade —
+   *  ADR 0018 §3's repairable dangling link, with the transcript and review history
+   *  intact. */
+  markedMissing: z.number().int().nonnegative(),
+});
+export type LibraryDeletePayload = z.infer<typeof libraryDeleteResponse>;
+
 /* ------------------------------------------------------------ items and review */
 /**
  * Stage 3 (ADR 0020). `03-api.md` §5 and §6 give paths and no bodies, same as Stage 2, so

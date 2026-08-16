@@ -19,6 +19,8 @@ import type {
   ItemHistoryPayload,
   ItemPayload,
   JobRecord,
+  LibraryDeletePayload,
+  LibraryListingPayload,
   MediaRootPreflightPayload,
   ReviewCardPayload,
   ReviewForecastPayload,
@@ -30,6 +32,8 @@ import type {
   TranscriptPayload,
   TranscriptPreviewPayload,
   TranscriptWordsPayload,
+  UploadListPayload,
+  UploadSessionPayload,
   VideoAcceptedPayload,
   VideoPayload,
 } from '@p80/core/browser';
@@ -41,6 +45,9 @@ export type {
   ItemHistoryPayload,
   ItemPayload,
   JobRecord,
+  LibraryDeletePayload,
+  LibraryEntryPayload,
+  LibraryListingPayload,
   MediaRootPreflightPayload,
   ParseWarningPayload,
   ReviewCardPayload,
@@ -54,6 +61,8 @@ export type {
   TranscriptPayload,
   TranscriptPreviewPayload,
   TranscriptWordsPayload,
+  UploadListPayload,
+  UploadSessionPayload,
   VideoAcceptedPayload,
   VideoPayload,
 } from '@p80/core/browser';
@@ -81,31 +90,43 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Turn a failed response into a typed `ApiError`.
+ *
+ * Extracted so the upload chunk request can reuse it. That request cannot go through
+ * `api<T>` — it must not send `content-type: application/json`, because its body is raw
+ * bytes — and duplicating the envelope handling would mean two places that decide what a
+ * failure looks like to the client.
+ */
+export async function throwEnvelope(response: Response): Promise<never> {
+  let envelope: ApiErrorEnvelope | null = null;
+  try {
+    envelope = (await response.json()) as ApiErrorEnvelope;
+  } catch {
+    // A non-JSON failure means something upstream of the API answered — usually the
+    // dev server with the API down, or a reverse proxy refusing the request before it
+    // ever reached P80. Say that plainly rather than showing "unexpected token <".
+  }
+  throw new ApiError(
+    envelope?.error ?? {
+      code: response.status === 413 ? 'PROXY_BODY_TOO_LARGE' : 'API_UNREACHABLE',
+      message:
+        response.status === 413
+          ? 'Something between this browser and P80 refused the request for being too large.'
+          : 'The P80 API did not respond. Is it running? Start everything with `pnpm dev`.',
+      retryable: true,
+    },
+    response.status,
+  );
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
     headers: { 'content-type': 'application/json', ...init?.headers },
   });
 
-  if (!response.ok) {
-    let envelope: ApiErrorEnvelope | null = null;
-    try {
-      envelope = (await response.json()) as ApiErrorEnvelope;
-    } catch {
-      // A non-JSON failure means something upstream of the API answered — usually the
-      // dev server with the API down. Say that plainly rather than showing "unexpected
-      // token <".
-    }
-    throw new ApiError(
-      envelope?.error ?? {
-        code: 'API_UNREACHABLE',
-        message:
-          'The P80 API did not respond. Is it running? Start everything with `pnpm dev`.',
-        retryable: true,
-      },
-      response.status,
-    );
-  }
+  if (!response.ok) await throwEnvelope(response);
 
   return (await response.json()) as T;
 }
@@ -348,3 +369,67 @@ export const hintCard = (sessionId: string, reviewId: string) =>
 
 export const completeSession = (sessionId: string) =>
   send<SessionPayload>('POST', `/api/review/session/${sessionId}/complete`, {});
+
+/* --------------------------------------------- media library and uploads (ADR 0024) */
+
+export const browseLibrary = (query: { path?: string; limit?: number; cursor?: string } = {}) => {
+  const params = new URLSearchParams();
+  if (query.path !== undefined) params.set('path', query.path);
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.cursor !== undefined) params.set('cursor', query.cursor);
+  const qs = params.toString();
+  return api<LibraryListingPayload>(`/api/library${qs === '' ? '' : `?${qs}`}`);
+};
+
+/** `acknowledgeVideos` is the second half of the server's two-step refusal. The client
+ *  never decides on its own that a delete is safe — it relays the 409, shows what the API
+ *  said would be affected, and comes back with the flag if the user agrees. */
+export const deleteLibraryFile = (path: string, acknowledgeVideos = false) =>
+  send<LibraryDeletePayload>(
+    'DELETE',
+    `/api/library/file?path=${encodeURIComponent(path)}&acknowledgeVideos=${acknowledgeVideos}`,
+  );
+
+export const createUpload = (body: {
+  filename: string;
+  sizeBytes: number;
+  title?: string;
+  interests?: Array<{ interestId: string; relevance: number }>;
+  transcribe?: boolean;
+}) => send<UploadSessionPayload>('POST', '/api/uploads', body);
+
+export const getUpload = (id: string) => api<UploadSessionPayload>(`/api/uploads/${id}`);
+
+export const listUploads = () => api<UploadListPayload>('/api/uploads');
+
+export const abortUpload = (id: string) =>
+  send<{ deleted: true; discardedBytes: number }>('DELETE', `/api/uploads/${id}`);
+
+export const completeUpload = (id: string) =>
+  send<VideoAcceptedPayload>('POST', `/api/uploads/${id}/complete`, {});
+
+/**
+ * Send one chunk.
+ *
+ * Deliberately not routed through `api<T>`: that helper's single job is JSON, and this
+ * body is raw bytes. What the two share is `throwEnvelope`, so a refusal reaches the user
+ * as the same typed `ApiError` either way.
+ *
+ * The `signal` is what makes Cancel immediate rather than "after this eight megabytes
+ * finishes uploading".
+ */
+export const uploadChunk = async (
+  id: string,
+  offset: number,
+  blob: Blob,
+  signal?: AbortSignal,
+): Promise<UploadSessionPayload> => {
+  const response = await fetch(`/api/uploads/${id}/chunk?offset=${offset}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/octet-stream' },
+    body: blob,
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) await throwEnvelope(response);
+  return (await response.json()) as UploadSessionPayload;
+};
