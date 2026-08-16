@@ -89,3 +89,70 @@ describe('CORS', () => {
     expect(res.statusCode).toBe(200);
   });
 });
+
+/**
+ * ADR 0023 — a reverse proxy serves P80 under a name that is not loopback, so the browser
+ * sends an Origin the default allowlist does not hold. Reads survive that and **writes do
+ * not**, which is the asymmetry the key exists to fix: a UI that renders and then fails on
+ * every rating reads as a broken application rather than as a CORS rule.
+ */
+describe('CORS with a trusted origin configured', () => {
+  const PROXY = 'https://p80.example.ts.net';
+  let proxied: TestApi;
+
+  beforeAll(async () => {
+    proxied = await createTestApi({
+      P80_WEB_PORT: '5173',
+      P80_API_PORT: '5180',
+      P80_TRUSTED_ORIGINS: `${PROXY}, https://other.example.ts.net`,
+    });
+  });
+  afterAll(async () => proxied?.dispose());
+
+  it('accepts a write from the configured origin', async () => {
+    const res = await proxied.server.app.inject({
+      method: 'PUT',
+      url: '/api/profile',
+      headers: { origin: PROXY },
+      payload: { dailyMinutes: 20 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBe(PROXY);
+  });
+
+  it('accepts its preflight, which is what a browser asks first', async () => {
+    const res = await proxied.server.app.inject({
+      method: 'OPTIONS',
+      url: '/api/profile',
+      headers: { origin: PROXY, 'access-control-request-method': 'PUT' },
+    });
+    expect(res.statusCode).toBeLessThan(300);
+  });
+
+  it('still accepts loopback, so `pnpm dev` is not broken by configuring a proxy', async () => {
+    const res = await proxied.server.app.inject({
+      method: 'GET',
+      url: '/api/health',
+      headers: { origin: 'http://127.0.0.1:5173' },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('widens the list by exactly what was named and nothing more', async () => {
+    // A near miss on the same tailnet: the point of a list is that being adjacent to an
+    // entry is not being on it.
+    for (const origin of [
+      'https://p80.example.ts.net.evil.example',
+      'http://p80.example.ts.net',
+      'https://p80.example.ts.net:8443',
+      'https://evil.example',
+    ]) {
+      const res = await proxied.server.app.inject({
+        method: 'GET',
+        url: '/api/health',
+        headers: { origin },
+      });
+      expect(res.statusCode, origin).toBe(403);
+    }
+  });
+});

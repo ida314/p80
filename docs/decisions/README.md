@@ -45,8 +45,9 @@ Never delete an ADR. The value is in the record of what was considered.
 | [0020](0020-manual-item-creation.md) | How a hand-made learning item enters the system | `POST /api/items`; occurrences anchor to segment-derived sentences, which constrains Stage 4 | Accepted |
 | [0021](0021-running-as-a-service.md) | How P80 runs when somebody is using it | systemd user units over containers; the API serves the built client; migrations and backups get their own units | Accepted |
 | [0022](0022-continuous-integration-and-deployment.md) | How a change reaches the running system | Hosted CI checks every push; deploying is a local pull-based script that snapshots, verifies, and rolls back code but never the database | Accepted |
+| [0023](0023-reverse-proxy-origins.md) | Reaching P80 from another device | `P80_TRUSTED_ORIGINS`, empty by default, boot-tier, wildcards refused; the proxy's access control is the whole security model | Accepted |
 
-**All 22 ADRs are accepted as of 2026-08-15.** Two questions inside ADR 0011 remain open by
+**All 23 ADRs are accepted as of 2026-08-16.** Two questions inside ADR 0011 remain open by
 design and resolve by measurement at Stage 8; one inside ADR 0016 resolves at the close of
 Stage 2.
 

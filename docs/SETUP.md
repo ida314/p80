@@ -265,6 +265,53 @@ not; enabling it is the one step that needs root:
 sudo loginctl enable-linger "$USER"
 ```
 
+## Reaching P80 from another device (ADR 0023)
+
+P80 binds `127.0.0.1` and accepts loopback browser origins only. To review on a tablet or a
+second laptop, put a mesh VPN or reverse proxy in front of it — something that
+authenticates the device, terminates TLS, and forwards to `127.0.0.1:5180`. P80 keeps
+binding loopback; the proxy is what listens.
+
+**P80 has no authentication of any kind.** Accounts are a non-goal, so whatever can reach
+the API can read and change everything in it. The proxy's access control is the entire
+security model. Restrict it to your own devices, and do not put P80 on the public internet —
+not through a public tunnel, not through a port forward on a router.
+
+With [Tailscale](https://tailscale.com), which needs MagicDNS and HTTPS certificates enabled
+on the tailnet:
+
+```bash
+tailscale serve --bg 5180        # → https://<host>.<tailnet>.ts.net:5180
+```
+
+Then name that origin in `.env.local` and restart, or the client will load and every write
+will fail:
+
+```bash
+P80_TRUSTED_ORIGINS=https://<host>.<tailnet>.ts.net:5180
+```
+
+```bash
+systemctl --user restart p80.target
+```
+
+**Why the second step is not optional.** Browsers attach an `Origin` header to any request
+that is not `GET` or `HEAD`, even a same-origin one. Served under a name that is not
+loopback, every rating, item, and settings change arrives with an origin the default
+allowlist does not hold, and comes back `403 ORIGIN_NOT_ALLOWED` while reads keep working —
+which looks like a broken application rather than a CORS rule. The key takes a
+comma-separated list of bare origins (`scheme://host[:port]`, no path, no wildcard), is
+refused at startup if malformed, and logs a warning while set.
+
+If you would rather change nothing, forward the port instead of proxying it, so the browser
+still sees a loopback origin:
+
+```bash
+ssh -L 5180:127.0.0.1:5180 <host>    # then open http://127.0.0.1:5180
+```
+
+That works untouched, and needs the tunnel up on every client device.
+
 ## Updating an installed P80 (ADR 0022)
 
 ```bash

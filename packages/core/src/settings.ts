@@ -51,6 +51,8 @@ export const BOOT_SETTING_REASONS = {
     'Consumed by listen() at startup. Changing where P80 binds is also an exposure decision (spec §32.5), which is deliberately not something a page can do.',
   P80_ALLOW_LAN:
     'Opting into LAN exposure warns first and is an explicit act (spec §32.5). A browser-reachable toggle would be a weaker guarantee than the one the spec asks for.',
+  P80_TRUSTED_ORIGINS:
+    'Widening the CORS allowlist is an exposure decision (ADR 0023), and a page that could add its own origin would be deciding who may talk to the API. Same reasoning as P80_ALLOW_LAN, and the allowlist is read once when the CORS hook is built.',
   P80_API_PORT: 'Consumed by listen() at startup.',
   P80_WEB_PORT: 'Consumed by the dev server and by the CORS allowlist at startup.',
   P80_NLP_PORT: 'Consumed by the sidecar process at startup.',

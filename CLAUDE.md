@@ -176,7 +176,7 @@ records what each deletion costs. Do not reintroduce either as a hedge.
 
 ## 4. Stack
 
-All twenty-two ADRs in `docs/decisions/` are accepted. The stack below is settled, not
+All twenty-three ADRs in `docs/decisions/` are accepted. The stack below is settled, not
 provisional — check there for *why* before changing any of it.
 
 Two clients over one API, split by whether the surface needs media (ADR 0007):

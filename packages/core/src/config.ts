@@ -62,7 +62,69 @@ export const configSchema = z.object({
   P80_ASR_REQUIRE_GPU: booleanish.default('true'),
   P80_ASR_ALIGN: booleanish.default('true'),
   P80_ASR_LANG_MIN_PROB: z.coerce.number().min(0).max(1).default(0.5),
+
+  /**
+   * Extra browser origins the API will accept, comma-separated. Empty by default (ADR 0023).
+   *
+   * This exists for reverse proxies that serve P80 under a name that is not loopback — a
+   * Tailscale `serve` mapping being the case it was written for. P80 still binds
+   * `127.0.0.1`; the proxy is what listens, and the browser then sends an `Origin` the
+   * loopback allowlist does not contain, which fails **every write** while reads keep
+   * working. That asymmetry is why this is a config key rather than advice.
+   *
+   * **Setting it is an exposure decision and warns at startup**, like `P80_ALLOW_LAN`.
+   * P80 has no authentication of any kind, so whatever reaches the API gets the whole
+   * library. The proxy's own access control is the only gate, and naming an origin here is
+   * a statement that one exists.
+   *
+   * Each entry must be a bare origin — `scheme://host[:port]`, no path, no credentials, and
+   * no `*`. A wildcard is refused rather than interpreted: it would turn the allowlist into
+   * a formality.
+   */
+  P80_TRUSTED_ORIGINS: z
+    .string()
+    .default('')
+    .superRefine((raw, ctx) => {
+      for (const entry of splitOriginList(raw)) {
+        if (normalizeOrigin(entry) === null) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${JSON.stringify(entry)} is not an origin. Use scheme://host[:port] with no path, and never "*".`,
+          });
+        }
+      }
+    }),
 });
+
+function splitOriginList(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '');
+}
+
+/**
+ * An origin, or `null` if the string is anything else.
+ *
+ * Deliberately narrow. `URL` accepts a great deal that is not an origin — paths, query
+ * strings, credentials — and an allowlist that silently ignored the parts it did not
+ * understand would match on less than the author wrote. A wildcard is rejected outright:
+ * the point of the list is that it is a list.
+ */
+function normalizeOrigin(entry: string): string | null {
+  if (entry.includes('*')) return null;
+  let url: URL;
+  try {
+    url = new URL(entry);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (url.username !== '' || url.password !== '') return null;
+  if (url.search !== '' || url.hash !== '') return null;
+  if (url.pathname !== '/' && url.pathname !== '') return null;
+  return url.origin;
+}
 
 /**
  * The complete, closed set of environment keys P80 reads. Any key not listed here is
@@ -174,11 +236,31 @@ export function isLanExposed(config: Config): boolean {
  * come back `ORIGIN_NOT_ALLOWED`.
  *
  * Both are loopback. This widens which loopback port may talk to the API, not who may.
+ *
+ * `P80_TRUSTED_ORIGINS` is the one way that changes, and it is empty unless somebody set
+ * it (ADR 0023). Everything it adds is normalised through `normalizeOrigin`, so the list
+ * compared against the request header holds origins and nothing else.
  */
 export function allowedOrigins(config: Config): string[] {
   const ports = new Set([config.P80_WEB_PORT, config.P80_API_PORT]);
-  return [...ports].flatMap((port) => [
+  const loopback = [...ports].flatMap((port) => [
     `http://127.0.0.1:${port}`,
     `http://localhost:${port}`,
   ]);
+  return [...loopback, ...trustedOrigins(config)];
+}
+
+/**
+ * The configured extra origins, normalised and deduplicated. Empty when unset.
+ *
+ * Validation already happened in the schema, so anything unparseable would have stopped
+ * startup by name. This is the read side.
+ */
+export function trustedOrigins(config: Config): string[] {
+  const seen = new Set<string>();
+  for (const entry of splitOriginList(config.P80_TRUSTED_ORIGINS)) {
+    const origin = normalizeOrigin(entry);
+    if (origin !== null) seen.add(origin);
+  }
+  return [...seen];
 }

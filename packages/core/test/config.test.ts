@@ -5,6 +5,7 @@ import {
   allowedOrigins,
   isLanExposed,
   loadConfig,
+  trustedOrigins,
 } from '../src/config.js';
 import { resolveFromRepoRoot } from '../src/paths.js';
 
@@ -44,6 +45,9 @@ describe('configuration', () => {
     'P80_NLP_BASE_URL',
     'P80_NLP_PORT',
     'P80_STORAGE_PATH',
+    // ADR 0023. Not a credential and not a secret: it names browser origins a reverse
+    // proxy serves P80 under, and it is empty unless somebody set it.
+    'P80_TRUSTED_ORIGINS',
     'P80_VLLM_BASE_URL',
     'P80_VLLM_MODEL_ID',
     'P80_WEB_PORT',
@@ -110,6 +114,88 @@ describe('configuration', () => {
     expect(() => loadConfig({ ...REQUIRED, P80_API_PORT: 'not-a-port' })).toThrow(
       /Invalid P80 configuration/,
     );
+  });
+
+  /**
+   * ADR 0023 — a reverse proxy serving P80 under a non-loopback name needs its origin
+   * listed, or every write comes back `ORIGIN_NOT_ALLOWED` while reads keep working.
+   *
+   * The validation tests matter more than the happy path. This key is the only thing that
+   * widens who may talk to the API, and P80 has no authentication behind it, so a value
+   * that is *nearly* an origin has to be refused at startup rather than half-honoured at
+   * request time.
+   */
+  describe('P80_TRUSTED_ORIGINS', () => {
+    it('is empty by default, so the allowlist is loopback until somebody says otherwise', () => {
+      const config = loadConfig({ ...REQUIRED });
+      expect(trustedOrigins(config)).toEqual([]);
+      expect(allowedOrigins(config).every((o) => o.includes('127.0.0.1') || o.includes('localhost'))).toBe(true);
+    });
+
+    it('appends the configured origins to the loopback ones', () => {
+      const config = loadConfig({
+        ...REQUIRED,
+        P80_WEB_PORT: '5180',
+        P80_API_PORT: '5180',
+        P80_TRUSTED_ORIGINS: 'https://p80.example.ts.net',
+      });
+      expect(allowedOrigins(config)).toEqual([
+        'http://127.0.0.1:5180',
+        'http://localhost:5180',
+        'https://p80.example.ts.net',
+      ]);
+    });
+
+    it('accepts a comma-separated list, trims it, and drops duplicates', () => {
+      const config = loadConfig({
+        ...REQUIRED,
+        P80_TRUSTED_ORIGINS: ' https://a.example.ts.net ,https://b.example.ts.net, https://a.example.ts.net ',
+      });
+      expect(trustedOrigins(config)).toEqual([
+        'https://a.example.ts.net',
+        'https://b.example.ts.net',
+      ]);
+    });
+
+    it('normalises a trailing slash, which is what a browser sends anyway', () => {
+      const config = loadConfig({
+        ...REQUIRED,
+        P80_TRUSTED_ORIGINS: 'https://p80.example.ts.net/',
+      });
+      expect(trustedOrigins(config)).toEqual(['https://p80.example.ts.net']);
+    });
+
+    it('keeps a non-default port, because the port is part of the origin', () => {
+      const config = loadConfig({
+        ...REQUIRED,
+        P80_TRUSTED_ORIGINS: 'https://gx.example.ts.net:5180',
+      });
+      expect(trustedOrigins(config)).toEqual(['https://gx.example.ts.net:5180']);
+    });
+
+    it.each([
+      ['*', 'a bare wildcard'],
+      ['https://*.example.ts.net', 'a wildcard subdomain'],
+      ['p80.example.ts.net', 'a bare host with no scheme'],
+      ['https://p80.example.ts.net/api', 'a path'],
+      ['https://p80.example.ts.net?x=1', 'a query string'],
+      ['https://user:pw@p80.example.ts.net', 'credentials'],
+      ['ftp://p80.example.ts.net', 'a scheme that is not http(s)'],
+      ['not a url', 'nonsense'],
+    ])('refuses %o at startup — %s', (value) => {
+      expect(() =>
+        loadConfig({ ...REQUIRED, P80_TRUSTED_ORIGINS: value }),
+      ).toThrow(/Invalid P80 configuration/);
+    });
+
+    it('names the offending entry rather than the whole list', () => {
+      expect(() =>
+        loadConfig({
+          ...REQUIRED,
+          P80_TRUSTED_ORIGINS: 'https://fine.example.ts.net,https://*.evil.example',
+        }),
+      ).toThrow(/\*/);
+    });
   });
 
   /**

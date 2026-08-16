@@ -448,7 +448,16 @@ stray request cannot destroy a learner's history.
 ## 10. Security posture
 
 - Bind to `127.0.0.1`. LAN exposure is opt-in and shows a warning first (§32.5).
-- Strict CORS: reject non-loopback origins by default.
+- Strict CORS: reject non-loopback origins by default. **The one exception is
+  `P80_TRUSTED_ORIGINS`** (ADR 0023), which names extra browser origins for a reverse proxy
+  serving P80 under a non-loopback name — empty unless set, boot-tier, refuses wildcards,
+  and warns at startup. Without it a proxied client loads and reads normally while every
+  write fails `ORIGIN_NOT_ALLOWED`, because browsers send `Origin` on any method that is not
+  GET or HEAD.
+- **There is no authentication.** Accounts are a §6 non-goal, so reachability *is*
+  authorization: whatever can reach the API can read and change everything. Anything that
+  widens reachability — `P80_ALLOW_LAN`, `P80_TRUSTED_ORIGINS`, a proxy — is relying on
+  something outside P80 to decide who gets through.
 - Transcript text is untrusted (§32.6). It is escaped on render, never interpolated into
   system prompts, and never used to build a URL or command.
 - No endpoint returns an API key, and no endpoint accepts one.

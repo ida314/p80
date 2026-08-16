@@ -10,6 +10,7 @@ import {
   findRepoRoot,
   isLanExposed,
   toEnvelope,
+  trustedOrigins,
   type Config,
 } from '@p80/core';
 import { ensureProfile, migrate, openDatabase, type DatabaseHandle } from '@p80/database';
@@ -66,8 +67,9 @@ export async function buildServer(
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  // Strict CORS: loopback web origins only (spec §32.5, `03-api.md` §10). A request from
-  // any other origin is refused rather than silently allowed.
+  // Strict CORS: loopback web origins, plus anything `P80_TRUSTED_ORIGINS` names (spec
+  // §32.5, `03-api.md` §10, ADR 0023). A request from any other origin is refused rather
+  // than silently allowed.
   const origins = allowedOrigins(config);
   await app.register(cors, {
     origin: (origin, cb) => {
@@ -78,8 +80,12 @@ export async function buildServer(
       cb(
         new P80Error(
           ERROR_CODES.ORIGIN_NOT_ALLOWED,
-          'This origin is not permitted. P80 accepts loopback origins only.',
-          { statusCode: 403, details: { origin } },
+          // The permitted list is named rather than described: "loopback origins only" was
+          // a true sentence that stopped being one the moment ADR 0023 made the list
+          // configurable, and a refusal that misstates the rule sends the reader to the
+          // wrong file.
+          `This origin is not permitted. P80 accepts: ${origins.join(', ')}.`,
+          { statusCode: 403, details: { origin, allowed: origins } },
         ),
         false,
       );
@@ -188,6 +194,21 @@ export async function buildServer(
       { bindHost: config.P80_BIND_HOST, allowLan: config.P80_ALLOW_LAN },
       'P80 is NOT bound to loopback. Anyone on this network can reach your library, ' +
         'transcripts, and review history. Unset P80_ALLOW_LAN to go back to 127.0.0.1.',
+    );
+  }
+
+  const trusted = trustedOrigins(config);
+  if (trusted.length > 0) {
+    // ADR 0023: still loopback-bound, so `isLanExposed` is false and the warning above
+    // stays quiet — but a proxy is reaching P80 from somewhere else, which is the same
+    // decision wearing different clothes. Warning on both keeps rule 13's "opt-in behind a
+    // warning" true of the mechanism rather than only of the one variable it was written
+    // for.
+    logger.warn(
+      { trustedOrigins: trusted },
+      'P80 accepts browser requests from non-loopback origins. P80 has no authentication, ' +
+        'so whatever can reach these origins can read and change everything. Unset ' +
+        'P80_TRUSTED_ORIGINS to accept loopback only.',
     );
   }
 
