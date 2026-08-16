@@ -176,7 +176,7 @@ records what each deletion costs. Do not reintroduce either as a hedge.
 
 ## 4. Stack
 
-All nineteen ADRs in `docs/decisions/` are accepted. The stack below is settled, not
+All twenty-two ADRs in `docs/decisions/` are accepted. The stack below is settled, not
 provisional — check there for *why* before changing any of it.
 
 Two clients over one API, split by whether the surface needs media (ADR 0007):
@@ -267,6 +267,7 @@ pnpm dev:noop     enqueue a NOOP job so the worker has something to claim
 
 bash scripts/smoke.sh                                    end-to-end, against a running P80
 bash scripts/service-install.sh                          install as systemd user services
+bash scripts/deploy.sh                                   update the installed P80 (ADR 0022)
 pnpm --filter @p80/tui dev health|jobs|profile           the management client
 uv run --project services/nlp pytest services/nlp/tests  sidecar tests
 ```

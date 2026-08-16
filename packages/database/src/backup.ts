@@ -6,9 +6,19 @@ import type { SqliteDatabase } from './client.js';
 export interface BackupOptions {
   /** Defaults to `<db dir>/backups`. */
   dir?: string;
-  /** Appears in the filename, e.g. `pre-migration`. */
+  /** Appears in the filename, e.g. `pre-migration`. Letters, digits, `-`, and `_` only. */
   reason?: string;
 }
+
+/**
+ * A reason becomes a filename segment, and `pruneBackups` decides what is routine by
+ * counting segments. A reason containing a dot would produce `p80.pre.deploy.<stamp>.db`,
+ * which is four segments and therefore not routine — but a dot in the *last* position, or
+ * an empty reason, can push a file back into the routine set and get it deleted. The
+ * failure mode is finding that the snapshot taken before an irreversible act is gone, at
+ * the moment it is needed, so this refuses rather than sanitising.
+ */
+const REASON_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 /**
  * Snapshots the database (Stage 1 step 14, `pnpm db:backup`).
@@ -27,6 +37,15 @@ export function backupDatabase(
     throw new P80Error(
       ERROR_CODES.BAD_REQUEST,
       'Cannot back up an in-memory database.',
+    );
+  }
+
+  if (options.reason !== undefined && !REASON_PATTERN.test(options.reason)) {
+    throw new P80Error(
+      ERROR_CODES.BAD_REQUEST,
+      `Invalid backup reason ${JSON.stringify(options.reason)}. ` +
+        'Letters, digits, hyphens, and underscores only — a dot or a separator would ' +
+        'change how retention reads the filename.',
     );
   }
 

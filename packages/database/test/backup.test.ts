@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { backupDatabase, pruneBackups } from '../src/backup.js';
 import { openDatabase } from '../src/client.js';
@@ -66,6 +66,27 @@ describe('database backup', () => {
       memory.close();
     }
   });
+
+  it('tags a snapshot with its reason, and retention then spares it', () => {
+    temp = createTempDatabase();
+    const path = backupDatabase(temp.sqlite, { reason: 'predeploy' });
+
+    expect(basename(path)).toMatch(/\.predeploy\./);
+    // The claim that matters is not the filename but what retention does with it.
+    expect(pruneBackups(dirname(path), { keepDays: 0, keepMinimum: 0 })).toEqual([]);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  // A reason reaches the filename, and `pruneBackups` reads the filename to decide what is
+  // routine. A dot would put a tagged snapshot back in the prunable set, which is discovered
+  // by finding it missing.
+  it.each(['pre.deploy', 'pre/deploy', '../escape', '', 'has space'])(
+    'refuses the reason %o rather than sanitising it',
+    (reason) => {
+      temp = createTempDatabase();
+      expect(() => backupDatabase(temp.sqlite, { reason })).toThrow(/backup reason/i);
+    },
+  );
 });
 
 /**

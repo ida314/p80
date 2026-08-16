@@ -28,6 +28,9 @@ data/
 storage/transcripts/
 storage/recordings/
 
+# Deploy mutex — scripts/deploy.sh holds this open for the length of a run.
+.deploy.lock
+
 # Logs
 logs/
 *.log

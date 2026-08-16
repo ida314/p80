@@ -1,0 +1,85 @@
+# The portable half of P80's gates. The other half is `scripts/deploy.sh`, which runs the
+# same checks on the machine P80 is actually installed on — see ADR 0022 for why both exist.
+#
+# Nothing here is P80's runtime: CLAUDE.md rule 15's empty external-request list is about
+# what a running P80 process does, and no deployed process talks to GitHub. Nothing here
+# needs a secret either (rule 14), and the `.env.local` this builds comes from the committed
+# `.env.example`, which holds local endpoint config only.
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+# A push that supersedes another cancels it. Single developer, one branch at a time.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    name: typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # A full checkout, deliberately. `test/docs-hygiene.test.ts` asserts it resolved more
+      # than ten documents, so a sparse checkout missing `docs/contracts/` fails loudly
+      # instead of passing while checking nothing.
+      - uses: actions/checkout@v4
+
+      # pnpm before setup-node: the `cache: pnpm` resolution below shells out to pnpm to
+      # find the store, so it has to already be on PATH. The version comes from the
+      # `packageManager` field, which is the same pin the developer machine uses.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Never --ignore-scripts. `pnpm-workspace.yaml` carries a reviewed `allowBuilds`
+      # allowlist for better-sqlite3 and esbuild, and the database tests need that native
+      # binding to have actually been built.
+      - run: pnpm install --frozen-lockfile
+
+      # The suite's one non-hermetic input. `packages/core/test/config.test.ts` asserts that
+      # `loadConfig()` with no argument reads `.env.local`, which is the only source of
+      # `P80_MEDIA_ROOT` — it has no default. Copying `.env.example` keeps that test proving
+      # the file was read. Exporting P80_MEDIA_ROOT into the job environment would also make
+      # it pass, but for the wrong reason: the process environment wins over the file, so
+      # the file would never be consulted and the test would assert nothing.
+      - name: Synthesize local config
+        run: |
+          cp .env.example .env.local
+          mkdir -p data/media
+
+      - run: pnpm -r typecheck
+
+      - run: pnpm test
+
+      # `tsc --noEmit && vite build`. It re-runs a typecheck, and it stays: this is the gate
+      # on `apps/web/dist`, the one artifact a deploy actually produces.
+      - run: pnpm build
+
+  python:
+    name: nlp sidecar
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Also full: services/nlp/tests/test_transcribe.py reads packages/core/src/config.ts
+      # from four directories up to check the ASR defaults have not drifted apart.
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version-file: services/nlp/.python-version
+
+      # No extras. `asr` (faster-whisper) and `align` (whisperx) are heavy, and every test
+      # is written to pass whether or not they are installed — the transcription tests
+      # assert a refusal, and none of them installs a model.
+      - run: uv sync --project services/nlp --frozen
+
+      - run: uv run --project services/nlp pytest services/nlp/tests

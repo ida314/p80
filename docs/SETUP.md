@@ -253,10 +253,6 @@ the built client itself, so everything is one origin and nothing listens on the 
 Both bind `127.0.0.1`. The two cannot run at once — they want the same API port — so stop
 the services before `pnpm dev`.
 
-Rebuilding after `git pull` means rerunning the installer, or `pnpm build` followed by
-`systemctl --user restart p80.target`: the API serves the files that were on disk when it
-started.
-
 The units name the absolute path of the `node` that was on your `PATH` at install time,
 because a service manager has no login shell to resolve one. If you change Node versions —
 particularly under a version manager, which moves the binary — rerun the installer.
@@ -268,6 +264,42 @@ not; enabling it is the one step that needs root:
 ```bash
 sudo loginctl enable-linger "$USER"
 ```
+
+## Updating an installed P80 (ADR 0022)
+
+```bash
+bash scripts/deploy.sh
+```
+
+Fetches, fast-forwards, installs dependencies, runs the typecheck and the suite, rebuilds
+the client, snapshots the database, restarts the target, and verifies the result with
+`scripts/smoke.sh`. If anything from the build onward fails, it puts the previous commit
+back, rebuilds, restarts, and checks that the old version came up.
+
+**It never restores the database, and says so.** The snapshot it takes before restarting is
+tagged, so retention keeps it indefinitely, and the script prints its path with the restore
+command for you to decide about. Restoring would discard every review completed since the
+snapshot was taken, which is not a script's call to make.
+
+```bash
+bash scripts/deploy.sh --dry-run     # preflight, then print what would happen
+bash scripts/deploy.sh --no-pull     # deploy the working tree as it stands
+bash scripts/deploy.sh --ref v0.3    # deploy a specific ref
+bash scripts/deploy.sh --skip-tests  # hotfix path; nothing checks the build
+```
+
+It refuses to start against a dirty working tree, a non-fast-forward, or a port already held
+by something that is not the `p80-api` unit — usually `pnpm dev`, which cannot run at the
+same time.
+
+By hand, the same thing is `pnpm build` followed by `systemctl --user restart p80.target`:
+the API serves the files that were on disk when it started. The script exists because that
+pair leaves out the snapshot, the gates, and the way back.
+
+Every push is separately checked by `.github/workflows/ci.yml`, which runs the same
+typecheck, suite, and build on a clean machine. The two are not redundant — a hosted runner
+has no media root, no local models, and a different architecture — and ADR 0022 explains why
+deploying is a command you run rather than something that listens for a push.
 
 ## Configuration
 

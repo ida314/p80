@@ -11,7 +11,7 @@
 **Also open:** Stage 2 and 2b, code-complete, six manual browser checks outstanding
 **Milestone:** M1 — First vertical slice
 **Running at:** <http://127.0.0.1:5180> as systemd user services (ADR 0021)
-**Last updated:** 2026-08-09
+**Last updated:** 2026-08-15
 
 ---
 
@@ -135,6 +135,32 @@ here per §5.1. Installed with `bash scripts/service-install.sh`.
 | `smoke.sh`: client check works from either origin; media root read from the API | **done** |
 | Verified: restart, graceful stop, loud config failure, backup restore | **done** |
 | Verified: survives a reboot | **not run** |
+
+### CI and deployment updates (ADR 0022)
+
+**Every push is checked by GitHub Actions; updating the installed P80 is
+`bash scripts/deploy.sh`.** Outside a stage; noted here per §5.1.
+
+| What | State |
+|---|---|
+| ADR 0022 written and accepted | **done** |
+| `.github/workflows/ci.yml` — `typescript` and `python` jobs | **done** |
+| `scripts/deploy.sh` — preflight, gates, snapshot, restart, verify, rollback | **done** |
+| `pnpm db:backup --reason <slug>`, validated; `backup` CLI logs to fd 2 | **done** |
+| `docs/SETUP.md` update section; `CLAUDE.md` §6 command | **done** |
+| Verified: clean-clone CI steps, dry run, happy path, rollback path, lock | **done** |
+| Verified: a real GitHub Actions run is green | **not run** — needs a push |
+
+CI synthesizes `.env.local` from `.env.example`, which is the one thing the suite needs and
+does not carry: `packages/core/test/config.test.ts` asserts `loadConfig()` reads the file,
+and `P80_MEDIA_ROOT` has no default. Exporting the variable instead would pass for the wrong
+reason — the process environment wins, so the file would never be read.
+
+**A seventh silent bug, and the second found by giving something a consumer rather than by a
+test.** `db:backup` wrote its path to stdout as a data channel while pino logged to the same
+descriptor — identical to the `dev:noop` defect that made `smoke.sh` flaky, and latent here
+only because nothing had ever parsed backup's output. `deploy.sh` parses it. Now
+`createCliLogger`, fd 2.
 
 562 TypeScript tests, 24 Python tests, nine packages typechecking, `smoke.sh` 75/75 against
 the installed services. Check count unchanged at 75 — the client check moved rather than
