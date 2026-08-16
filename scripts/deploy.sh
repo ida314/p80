@@ -74,6 +74,12 @@ rollback() {
     && [[ "${STAGE}" != restart ]] && [[ "${STAGE}" != verify ]] && return 0
 
   say "Rolling back to ${PREV_SHA:0:12}"
+  # Back onto the branch first when there was one. `--ref` detaches HEAD, and a rollback
+  # that restores the right commit while leaving HEAD detached has put the repository in a
+  # state the next deploy refuses to run from.
+  if [[ "${BRANCH}" != HEAD ]] && [[ "$(git rev-parse --abbrev-ref HEAD)" != "${BRANCH}" ]]; then
+    git checkout --force "${BRANCH}" >/dev/null 2>&1 || note "WARNING: could not return to ${BRANCH}."
+  fi
   git reset --hard "${PREV_SHA}" >/dev/null 2>&1 || note "WARNING: could not reset the tree."
   pnpm install --frozen-lockfile >/dev/null 2>&1 || note "WARNING: pnpm install failed during rollback."
 
