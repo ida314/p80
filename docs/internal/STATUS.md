@@ -149,7 +149,11 @@ here per §5.1. Installed with `bash scripts/service-install.sh`.
 | `pnpm db:backup --reason <slug>`, validated; `backup` CLI logs to fd 2 | **done** |
 | `docs/SETUP.md` update section; `CLAUDE.md` §6 command | **done** |
 | Verified: clean-clone CI steps, dry run, happy path, rollback path, lock | **done** |
-| Verified: a real GitHub Actions run is green | **not run** — needs a push |
+| Verified: a real GitHub Actions run is green | **done** — both jobs, every step |
+
+First run: the TypeScript job 69s, the sidecar job 10s. The deploy script was exercised
+against the live services both ways — a clean deploy to smoke 75/75, and a deliberately
+broken build that rolled back to the previous commit and came up healthy.
 
 CI synthesizes `.env.local` from `.env.example`, which is the one thing the suite needs and
 does not carry: `packages/core/test/config.test.ts` asserts `loadConfig()` reads the file,

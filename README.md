@@ -1,5 +1,7 @@
 # P80
 
+[![CI](https://github.com/ida314/p80/actions/workflows/ci.yml/badge.svg)](https://github.com/ida314/p80/actions/workflows/ci.yml)
+
 A local-first language-learning application. It turns video files you already have into a
 small, high-value curriculum of words, multiword expressions, and constructions — then
 trains recognition, production, and contextual transfer while reconnecting each item to the
