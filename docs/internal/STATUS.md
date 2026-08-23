@@ -386,8 +386,8 @@ risk. `p80-backup.service` produced a snapshot from a container; the timer is sc
 clears docker, compose, the daemon, the installed unit, and the port check, and prints the
 new stage list.
 
-**Not verified:** a real `deploy.sh` run end to end, including the rollback path, and a
-reboot.
+**Verified 2026-08-23:** a real `deploy.sh` run end to end, and **both** rollback paths.
+**Still not verified:** a reboot — it needs `sudo`, which is interactive here.
 
 ### Two things found on the way, both out of scope and both worth fixing
 
@@ -408,6 +408,26 @@ reboot.
 pointing it at an unmounted directory cannot work until the unit restarts. It fails
 honestly — `validateMediaRoot` runs inside the container and the preflight endpoint returns
 `not_found` — but the capability is narrower than it was.
+
+## Deploy and rollback, exercised (2026-08-23)
+
+Three real `deploy.sh` runs and three rollback rehearsals against the installed service.
+Smoke 98/98 each time. `p80-node`/`p80-nlp` now carry per-commit tags, so the next rollback
+takes the retag path rather than the rebuild fallback.
+
+| Path | Result |
+|---|---|
+| Clean deploy, pull → gates → build → snapshot → restart → verify → smoke | **passes** |
+| Rollback, retag (`--no-pull`, images tagged) | **passes** — after the fix below |
+| Rollback, retag (`--ref`, checkout and images agree) | **passes** |
+| Rollback, rebuild fallback (no per-commit image) | **passes** |
+| Survives a reboot | **not run** — needs `sudo`, which is interactive here |
+
+**The first rehearsal failed, and that is what it was for.** The rollback restored the
+*broken* build and reported success while P80 stayed down. Fixed in `bf97693`; ADR 0025's
+rollback consequence and `test/deploy-parity.test.ts` carry the distinction. The rest of the
+sequence — checkout restored, branch reattached from a detached `--ref`, database
+deliberately not rolled back with the restore command printed — behaved as written.
 
 ## A smoke suite that puts back what it changed (2026-08-23)
 
