@@ -446,6 +446,19 @@ CPU-speed folklore.
   unmeasured, and it now records that a single run per model cannot measure a difference
   smaller than the run-to-run variance.
 
+**Measured against the live sidecar afterwards, three runs of the 7-minute file**
+(`large-v3-turbo`, `int8`, twenty CPU cores): **82 s, 80 s, 80 s — 510 words every time.**
+
+- **Reproducibility is fixed.** The same two runs previously gave 524 and 542 words with a
+  hallucinated tail across several scripts. `condition_on_previous_text` was the cause, and
+  a WER comparison is now possible at all. It still needs several runs per model, because
+  one number with no spread proves nothing.
+- **The model cache is worth about two seconds a job here, not more.** 82 s first, 80 s
+  after — the model file was already on disk, so the load was never the multi-gigabyte cost
+  the follow-up note implied. Recorded because replacing the CPU-speed folklore with a
+  second unmeasured claim in the same session would have been the same mistake. The comment
+  in `asr.py` carries the number.
+
 ## Deploy and rollback, exercised (2026-08-23)
 
 Three real `deploy.sh` runs and three rollback rehearsals against the installed service.

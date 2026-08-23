@@ -239,9 +239,12 @@ def assert_device(settings: Settings) -> None:
 # One model, held between requests, keyed by everything that decides which model it *is*.
 #
 # `WhisperModel(...)` used to be constructed inside `transcribe()`, so every request paid a
-# full load — gigabytes read and a container initialised — before any audio was decoded. On
-# the first measured run that cost was inside the 134 s that transcribed 7 minutes of audio,
-# and it was being paid again on every job after it.
+# full load before any audio was decoded. Measured on `large-v3-turbo`, `int8`, twenty CPU
+# cores, with the model file already on disk: **about two seconds a job** — 82 s for the
+# first transcription of a 7-minute file and 80 s for each one after it. Worth having and
+# not worth overstating; the number is here so nobody has to re-derive it, and so this
+# comment does not become the next thing corrected for claiming an unmeasured multiple.
+# A cold model file, or a larger one, pays more.
 #
 # Keyed on the triple because all three are per-request overridable (ADR 0019 §5): a cache
 # keyed on the model name alone would hand back a CPU model to a request that asked for
