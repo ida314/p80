@@ -37,6 +37,55 @@ check() {
 
 status() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 
+# --- putting things back -----------------------------------------------------------
+#
+# Registered as things are created, not removed at the point of use. The straight-line form
+# leaks on any early exit, and one of the things this script changes is a **live setting** —
+# the user's real configuration, not scratch state. A smoke run that permanently downgrades
+# the transcription model is a defect in the suite, and it was one for months.
+CLEANUP_FILES=()
+CLEANUP_TREES=()
+CLEANUP_DIRS=()
+
+# "" nothing to put back · "-" there was no row, so clear it · anything else, the old value.
+# The two are not interchangeable: writing the environment value back leaves a row that has
+# stopped tracking .env.local, which is the state this script used to leave behind.
+ASR_MODEL_RESTORE=""
+
+restore_asr_model() {
+  [[ -n "${ASR_MODEL_RESTORE}" ]] || return 0
+  local payload
+  if [[ "${ASR_MODEL_RESTORE}" == "-" ]]; then
+    payload='{"settings":{"P80_ASR_MODEL":null}}'
+  else
+    payload="{\"settings\":{\"P80_ASR_MODEL\":\"${ASR_MODEL_RESTORE}\"}}"
+  fi
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'content-type: application/json' \
+            -d "${payload}" "${API}/api/settings")"
+  # Loud, because a silent failure here is exactly the defect this function exists to fix:
+  # the run would end reporting success while having left the model overridden.
+  if [[ "${code}" != 200 ]]; then
+    printf '\n  WARNING  could not restore P80_ASR_MODEL (HTTP %s).\n' "${code}" >&2
+    printf '           Put it back with: p80 settings %s\n' \
+      "$([[ "${ASR_MODEL_RESTORE}" == "-" ]] && echo 'revert P80_ASR_MODEL' \
+         || echo "set P80_ASR_MODEL ${ASR_MODEL_RESTORE}")" >&2
+    return 1
+  fi
+  ASR_MODEL_RESTORE=""
+}
+
+cleanup() {
+  local path
+  for path in "${CLEANUP_FILES[@]:-}"; do [[ -n "${path}" ]] && rm -f "${path}"; done
+  for path in "${CLEANUP_TREES[@]:-}"; do [[ -n "${path}" ]] && rm -rf "${path}"; done
+  # Tolerated failure: these are shared with the user's own library and are only ours to
+  # remove while they are empty.
+  for path in "${CLEANUP_DIRS[@]:-}"; do [[ -n "${path}" ]] && rmdir "${path}" 2>/dev/null; done
+  restore_asr_model
+}
+trap cleanup EXIT
+
 echo "P80 smoke check — ${API}"
 echo
 
@@ -106,6 +155,11 @@ echo "ingestion — add, upload, parse, read, correct, delete"
 media_root="$(curl -s "${API}/api/settings" \
   | grep -o '"key":"P80_MEDIA_ROOT","tier":"[a-z]*","value":"[^"]*"' \
   | sed 's/.*"value":"//; s/"$//')"
+# Anything this run puts under the media root is registered now rather than removed at the
+# point of use, so a ^C between here and the end still takes it out.
+if [[ -n "${media_root}" ]]; then
+  CLEANUP_TREES+=("${media_root}/smoke")
+fi
 media_root="${media_root:-${P80_MEDIA_ROOT:-${REPO}/data/media}}"
 media_rel="smoke/smoke-$(date +%s | tail -c 7).mp4"
 mkdir -p "$(dirname "${media_root}/${media_rel}")"
@@ -307,7 +361,8 @@ else
 fi
 
 # The media root is the user's own library, not a scratch directory. Leaving fixtures in it
-# would be P80 writing to the one place it is supposed to only ever read from.
+# would be P80 writing to the one place it is supposed to only ever read from. Removed here
+# *and* registered with the trap, so an interrupted run does not leave it behind either.
 rm -rf "${media_root:?}/smoke"
 
 echo
@@ -315,6 +370,10 @@ echo "media library and uploads (ADR 0024)"
 # The `curl`-only constraint (ADR 0007) is a real design constraint for this surface, and
 # this section is the proof it holds: a complete upload, end to end, with no browser.
 upload_name="smoke-upload-$(date +%s | tail -c 7).mp4"
+# Registered before the first byte is sent: an interrupted upload leaves a partial file, and
+# `<media root>/uploads/` is the user's library rather than a scratch directory.
+CLEANUP_FILES+=("${media_root}/uploads/${upload_name}" "${TMPDIR:-/tmp}/p80-smoke-chunk")
+CLEANUP_DIRS+=("${media_root}/uploads/.p80-partial" "${media_root}/uploads")
 upload_body="$(printf 'P80 smoke upload payload')"
 upload_size="${#upload_body}"
 
@@ -437,12 +496,35 @@ check "and says why"     system_directory "$(curl -s -X POST -H 'content-type: a
                                               "${API}/api/settings/media-root/preflight" \
                                               | grep -o '"reason":"[^"]*"' | cut -d'"' -f4)"
 # An ASR option round-trips, and reports itself as overriding the environment.
+#
+# Read before writing. This is the live model setting, and the value here is whatever the
+# user chose — so the run has to put back exactly what it found, including the difference
+# between "there was a row" and "there was not" (ADR 0026).
+asr_row="$(curl -s "${API}/api/settings" | grep -o '"key":"P80_ASR_MODEL"[^}]*')"
+asr_model_was="$(grep -o '"value":"[^"]*"' <<<"${asr_row}" | head -1 | cut -d'"' -f4)"
+asr_source_was="$(grep -o '"source":"[a-z]*"' <<<"${asr_row}" | head -1 | cut -d'"' -f4)"
+if [[ "${asr_source_was}" == database ]]; then
+  ASR_MODEL_RESTORE="${asr_model_was}"
+elif [[ "${asr_source_was}" == environment ]]; then
+  ASR_MODEL_RESTORE="-"
+fi
+
 check "an ASR option is writable"  200 "$(status -X PUT -H 'content-type: application/json' \
                                             -d '{"settings":{"P80_ASR_MODEL":"medium"}}' \
                                             "${API}/api/settings")"
 check "and wins over .env.local" database "$(curl -s "${API}/api/settings" \
                                               | grep -o '"key":"P80_ASR_MODEL"[^}]*"source":"[a-z]*"' \
                                               | grep -o '"source":"[a-z]*"' | cut -d'"' -f4)"
+
+# The suite's own footprint, asserted rather than assumed. Before this check existed, every
+# run left `P80_ASR_MODEL: medium` in the database and the effect was read twice as a
+# leftover experiment.
+restore_asr_model
+asr_row_after="$(curl -s "${API}/api/settings" | grep -o '"key":"P80_ASR_MODEL"[^}]*')"
+check "the run puts the model back" "${asr_model_was}" \
+      "$(grep -o '"value":"[^"]*"' <<<"${asr_row_after}" | head -1 | cut -d'"' -f4)"
+check "and leaves no new override" "${asr_source_was}" \
+      "$(grep -o '"source":"[a-z]*"' <<<"${asr_row_after}" | head -1 | cut -d'"' -f4)"
 
 echo
 echo "origins"

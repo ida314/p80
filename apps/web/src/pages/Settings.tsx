@@ -29,7 +29,10 @@ import { useResource } from '../hooks/useResource.js';
  */
 export function Settings() {
   const settings = useResource(() => getSettings(), []);
-  const [drafts, setDrafts] = useState<Record<string, string | number | boolean>>({});
+  // `null` is a draft too: it means "revert this key to the environment" (ADR 0026). It has
+  // to be a draft rather than an immediate write so that reverting the media root can be
+  // refused, counted, and confirmed on the same path as changing it.
+  const [drafts, setDrafts] = useState<Record<string, string | number | boolean | null>>({});
   const [problem, setProblem] = useState<ApiError | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -38,13 +41,24 @@ export function Settings() {
   const live = rows.filter((row) => row.tier === 'live');
   const boot = rows.filter((row) => row.tier === 'boot');
 
-  const draftOf = (row: SettingViewPayload) => drafts[row.key] ?? row.value;
-  const changed = (row: SettingViewPayload) => drafts[row.key] !== undefined && drafts[row.key] !== row.value;
+  const reverting = (row: SettingViewPayload) => drafts[row.key] === null;
+  // `??` is wrong here: a null draft is a value, not an absence. Shown as the environment
+  // value, because that is what saving would leave in place.
+  const draftOf = (row: SettingViewPayload) =>
+    !(row.key in drafts) ? row.value : (drafts[row.key] ?? row.environmentValue);
+  const changed = (row: SettingViewPayload) =>
+    row.key in drafts && drafts[row.key] !== row.value;
   const dirty = live.filter(changed);
 
   const edit = (key: string, value: string | number | boolean) => {
     setSaved(false);
     setDrafts((current) => ({ ...current, [key]: value }));
+  };
+
+  // Typing in the field afterwards cancels it, which is what the shared `drafts` map buys.
+  const revert = (key: string) => {
+    setSaved(false);
+    setDrafts((current) => ({ ...current, [key]: null }));
   };
 
   const save = async (acknowledgeOrphans = false) => {
@@ -92,13 +106,15 @@ export function Settings() {
           row={row}
           value={draftOf(row)}
           changed={changed(row)}
+          reverting={reverting(row)}
           onChange={(value) => edit(row.key, value)}
+          onRevert={() => revert(row.key)}
         />
       ))}
 
       {/* The preflight is a live read while the field is being typed, which is why it is
           its own component with its own debounce rather than part of the save path. */}
-      {mediaRootDraft !== undefined && (
+      {mediaRootDraft !== undefined && !reverting(mediaRootDraft) && (
         <MediaRootImpact path={String(drafts[mediaRootDraft.key])} />
       )}
 
@@ -187,12 +203,16 @@ function SettingField({
   row,
   value,
   changed,
+  reverting,
   onChange,
+  onRevert,
 }: {
   row: SettingViewPayload;
   value: string | number | boolean;
   changed: boolean;
+  reverting: boolean;
   onChange: (value: string | number | boolean) => void;
+  onRevert: () => void;
 }) {
   const id = useId();
   const tipId = `${id}-tip`;
@@ -210,7 +230,8 @@ function SettingField({
         {/* A stored value that no longer matches .env.local is overridden, not ignored,
             and those two look identical without saying so. */}
         {row.source === 'database' && !changed && <em>· overridden here</em>}
-        {changed && <em>· unsaved</em>}
+        {changed && !reverting && <em>· unsaved</em>}
+        {reverting && <em>· reverting to .env.local</em>}
       </span>
 
       {row.control === 'boolean' ? (
@@ -258,7 +279,14 @@ function SettingField({
           a hover is how it goes unnoticed. */}
       {row.source === 'database' && (
         <span className="hint">
-          Your <code>.env.local</code> says <code>{String(row.environmentValue)}</code>.
+          Your <code>.env.local</code> says <code>{String(row.environmentValue)}</code>.{' '}
+          {/* Only where there is an override to drop. On a row already tracking the
+              environment there is nothing to revert, and a disabled button would imply
+              otherwise (ADR 0026 §3). Typing the environment value in by hand is a
+              different act — it writes a row that then stops tracking the file. */}
+          <button type="button" className="button-link" disabled={reverting} onClick={onRevert}>
+            Revert to it
+          </button>
         </span>
       )}
       {row.invalid !== undefined && (

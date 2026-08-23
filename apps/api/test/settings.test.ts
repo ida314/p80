@@ -384,3 +384,115 @@ describe('POST /api/settings/media-root/preflight', () => {
     expect(response.json()).toMatchObject({ videoCount: 1, resolved: 0, orphaned: 1 });
   });
 });
+
+/**
+ * ADR 0026 — `null` reverts a key to its environment value.
+ *
+ * The property that matters is the one that is easy to fake and wrong: reverting must leave
+ * the key *tracking* `.env.local`, not holding a row that happens to contain the same
+ * string. `source` is what tells those two apart, which is why every assertion here reads it
+ * rather than `value`.
+ */
+describe('PUT /api/settings — reverting to the environment', () => {
+  let api: TestApi | null = null;
+  let library: string | null = null;
+
+  afterEach(async () => {
+    await api?.dispose();
+    api = null;
+    if (library) rmSync(library, { recursive: true, force: true });
+    library = null;
+  });
+
+  const put = (app: TestApi, body: Record<string, unknown>) =>
+    app.server.app.inject({ method: 'PUT', url: '/api/settings', payload: body });
+
+  const view = (response: { json: <T>() => T }, key: string) =>
+    response
+      .json<{ settings: Array<Record<string, unknown>> }>()
+      .settings.find((s) => s.key === key);
+
+  it('drops an override and returns the key to the environment', async () => {
+    api = await createTestApi();
+
+    const written = await put(api, { settings: { P80_ASR_MODEL: 'medium' } });
+    expect(view(written, 'P80_ASR_MODEL')).toMatchObject({
+      value: 'medium',
+      source: 'database',
+    });
+
+    const reverted = await put(api, { settings: { P80_ASR_MODEL: null } });
+    expect(reverted.statusCode).toBe(200);
+    expect(view(reverted, 'P80_ASR_MODEL')).toMatchObject({
+      value: 'large-v3',
+      source: 'environment',
+    });
+  });
+
+  it('is a no-op on a key that was never overridden', async () => {
+    // Not an error: this is the state the caller asked for. A 404 here would make an
+    // idempotent restore impossible to write.
+    api = await createTestApi();
+    const response = await put(api, { settings: { P80_ASR_MODEL: null } });
+    expect(response.statusCode).toBe(200);
+    expect(view(response, 'P80_ASR_MODEL')).toMatchObject({ source: 'environment' });
+  });
+
+  it('applies a write and a revert named in the same batch', async () => {
+    api = await createTestApi();
+    await put(api, { settings: { P80_ASR_MODEL: 'medium', P80_ASR_ALIGN: false } });
+
+    const response = await put(api, {
+      settings: { P80_ASR_MODEL: null, P80_ASR_COMPUTE_TYPE: 'int8' },
+    });
+    expect(view(response, 'P80_ASR_MODEL')).toMatchObject({ source: 'environment' });
+    expect(view(response, 'P80_ASR_COMPUTE_TYPE')).toMatchObject({
+      value: 'int8',
+      source: 'database',
+    });
+    // Untouched by this request, so still overridden.
+    expect(view(response, 'P80_ASR_ALIGN')).toMatchObject({ source: 'database' });
+  });
+
+  it('refuses to revert a boot-tier key rather than silently doing nothing', async () => {
+    api = await createTestApi();
+    const response = await put(api, { settings: { P80_API_PORT: null } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.details).toMatchObject({ reason: 'boot_tier' });
+  });
+
+  it('counts the cost of reverting the media root, and needs the same acknowledgement', async () => {
+    // ADR 0026 §2: reverting is not the safe direction. Here the environment root is the one
+    // holding no library, so going back to it is what orphans the video.
+    api = await createTestApi();
+    library = mkdtempSync(join(tmpdir(), 'p80-library-'));
+    writeFileSync(join(library, 'lektion-3.mp4'), 'bytes');
+
+    await put(api, { settings: { P80_MEDIA_ROOT: library } });
+    const created = await api.server.app.inject({
+      method: 'POST',
+      url: '/api/videos',
+      payload: { path: 'lektion-3.mp4' },
+    });
+    expect(created.statusCode).toBe(202);
+
+    const refused = await put(api, { settings: { P80_MEDIA_ROOT: null } });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().error).toMatchObject({
+      code: 'MEDIA_ROOT_WOULD_ORPHAN',
+      details: { orphaned: 1 },
+    });
+
+    const acknowledged = await put(api, {
+      settings: { P80_MEDIA_ROOT: null },
+      acknowledgeOrphans: true,
+    });
+    expect(acknowledged.statusCode).toBe(200);
+    expect(view(acknowledged, 'P80_MEDIA_ROOT')).toMatchObject({ source: 'environment' });
+
+    // And the recompute ran on the way out, so the library list is truthful immediately
+    // rather than one click at a time.
+    const videos = await api.server.app.inject({ url: '/api/videos' });
+    expect(videos.json().videos[0]).toMatchObject({ mediaMissing: true });
+  });
+});

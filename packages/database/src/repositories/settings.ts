@@ -146,3 +146,22 @@ export function writeSetting(
   setSetting(handle, key, value);
   return { previous };
 }
+
+/**
+ * Drop one editable key's override, returning what it removed.
+ *
+ * The mirror of `writeSetting`, and it refuses a non-editable key for the same reason:
+ * clearing a boot key would appear to work and change nothing, which is the failure ADR 0019
+ * §2 is organised around avoiding. `cleared` is false when there was no row — not an error,
+ * because that is the state the caller asked for (ADR 0026 §1).
+ */
+export function revertSetting(
+  handle: DatabaseHandle,
+  key: EditableSettingKey,
+): { previous: unknown; cleared: boolean } {
+  if (!isEditableSettingKey(key)) {
+    throw new Error(`${key} is not an editable setting; clearing it would do nothing.`);
+  }
+  const previous = getSetting(handle, key);
+  return { previous, cleared: clearSetting(handle, key) };
+}

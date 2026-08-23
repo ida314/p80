@@ -93,12 +93,18 @@ process restarts is the wrong shape for them.
 page that omits the port it is served on is one the user will not trust, and the reason each
 is read-only is more useful shown than implied.
 
-`PUT /api/settings` takes `{ settings: Record<string, string | number | boolean>,
+`PUT /api/settings` takes `{ settings: Record<string, string | number | boolean | null>,
 acknowledgeOrphans?: boolean }`. A batch, because the ASR options are edited together. Every
 key is validated before any is written, so a request either fails before touching anything
 or applies everything it named. A boot-tier or unknown key is `400 SETTING_NOT_EDITABLE`
 with `details.reason` distinguishing the two — a read-only setting and a typo mean different
 things to whoever sent it.
+
+**`null` reverts a key to its environment value** (ADR 0026) rather than writing one, and the
+response reports `source: "environment"` for it. Clearing a key that has no row is not an
+error — it is the state the caller asked for. Writing the environment value back is *not* the
+same act and must not be offered as one: a row holding the same string stops tracking
+`.env.local` and diverges at the next edit of that file.
 
 **`P80_ALLOW_LAN` and `P80_BIND_HOST` are not writable, and that is a security property
 rather than a restart problem.** §32.5 makes LAN exposure an opt-in act with a warning; a
@@ -112,7 +118,10 @@ root that `04-providers.md` rule 4 assumes is trusted configuration:
   `400 INVALID_MEDIA_ROOT` with `details.reason`. The refusal list is not a security
   boundary and is not claimed as one — loopback binding and strict CORS are.
 - A change that would leave any video unable to resolve its file is
-  `409 MEDIA_ROOT_WOULD_ORPHAN` unless the body carries `acknowledgeOrphans: true`.
+  `409 MEDIA_ROOT_WOULD_ORPHAN` unless the body carries `acknowledgeOrphans: true`. **A
+  revert pays the same price**, against the environment value it would return to: reverting
+  is not the safe direction, since `.env.local` can name a directory that has since been
+  removed.
   `details` carries `videoCount`, `resolved`, `orphaned`, and a bounded `orphanedSample`.
   Same shape as `TRANSCRIPT_ALREADY_EXISTS` requiring `replace: true`: the cost is counted,
   stated, and then paid deliberately. Nothing is destroyed — setting the root back restores

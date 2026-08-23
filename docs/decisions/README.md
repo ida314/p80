@@ -48,8 +48,9 @@ Never delete an ADR. The value is in the record of what was considered.
 | [0023](0023-reverse-proxy-origins.md) | Reaching P80 from another device | `P80_TRUSTED_ORIGINS`, empty by default, boot-tier, wildcards refused; the proxy's access control is the whole security model | Accepted |
 | [0024](0024-uploading-media.md) | Putting a file into the library from the browser | Chunked resumable upload into one writable directory; rule 1 re-phrased as a mechanism; deletion bounded to what P80 wrote | Accepted |
 | [0025](0025-containerising-p80.md) | How P80 is deployed and supervised | Containers under one user unit; host networking keeps the loopback bind in the process; rollback is a retag | Accepted |
+| [0026](0026-clearing-a-runtime-setting.md) | Reverting a runtime setting to the environment | `null` in the write batch drops the override; a revert pays the same orphan price as a write | Accepted |
 
-**All 25 ADRs are decided as of 2026-08-23. 0021 is superseded by 0025** — in part: 0025
+**All 26 ADRs are decided as of 2026-08-23. 0021 is superseded by 0025** — in part: 0025
 reverses its choice of user units over containers, and depends on the two sections of it
 that survive. Two questions inside ADR 0011 remain open by
 design and resolve by measurement at Stage 8; one inside ADR 0016 resolves at the close of

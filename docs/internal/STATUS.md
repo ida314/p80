@@ -391,12 +391,8 @@ reboot.
 
 ### Two things found on the way, both out of scope and both worth fixing
 
-- **`scripts/smoke.sh:441` writes `P80_ASR_MODEL: medium` into the live database and never
-  restores it.** Every smoke run silently downgrades the model. This is the source of the
-  `medium` override found on 2026-08-22 — not a leftover experiment — and it reverted the
-  `large-v3-turbo` setting twice during this session. The setting has been restored again.
-  A smoke suite that permanently changes real configuration is the defect; round-tripping to
-  the value it read is the fix.
+- ~~**`scripts/smoke.sh:441` writes `P80_ASR_MODEL: medium` into the live database and never
+  restores it.**~~ **Fixed 2026-08-23 — see below.**
 - **Transcription is not reproducible run to run.** Two identical requests to the same
   container, same model and options, gave 524 and 542 words. The entire difference was one
   region at the end of the audio, where the second run hallucinated across several scripts
@@ -412,6 +408,35 @@ reboot.
 pointing it at an unmounted directory cannot work until the unit restarts. It fails
 honestly — `validateMediaRoot` runs inside the container and the preflight endpoint returns
 `not_found` — but the capability is narrower than it was.
+
+## A smoke suite that puts back what it changed (2026-08-23)
+
+**ADR 0026 accepted; ADR 0019 amended.** Outside a stage; noted here per §5.1.
+
+`smoke.sh` wrote `P80_ASR_MODEL: medium` and could not undo it, because there was no way to
+undo any setting: `PUT /api/settings` took no null and `clearSetting` was never exposed. The
+settings page showed `environmentValue` and offered no way back to it.
+
+| What | State |
+|---|---|
+| ADR 0026 written and accepted; `03-api.md` §2 amended | **done** |
+| `revertSetting`; `PUT /api/settings` accepts `null` | **done** |
+| A revert of the media root pays the same orphan gate as a write | **done** |
+| Web "Revert to it"; `p80 settings revert <key>` | **done** |
+| `smoke.sh` reads value **and** source first, then restores exactly | **done** |
+| `trap cleanup EXIT` — the four straight-line `rm`s moved into it | **done** |
+
+**2750 TypeScript tests / 58 files** (up from 2741), nine packages typechecking, and
+`smoke.sh` **98/98** against a scratch instance on `:5199` with its own database and media
+root — 96 plus two new checks that assert the suite's own footprint. After the run every live
+key read `source: environment` and the media root was empty. An interrupted run was checked
+separately: `SIGINT` mid-suite now removes the fixture tree the straight-line form leaked.
+
+Two things deliberately not done. **The 14 archived `Guten` items** left in the live database
+by past runs stay: there is no item-delete route, archiving is the correct outcome of deleting
+their video (§7 invariant 5), and reaching into the table behind the API is what ADR 0007
+forbids. **`P80_ASR_REQUIRE_GPU` keeps its `true` default** — flipping it is a decision, not a
+correction, and belongs with the CPU-speed folklore fix.
 
 ## Blocked on
 

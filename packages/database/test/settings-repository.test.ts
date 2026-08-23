@@ -7,6 +7,7 @@ import {
   getSetting,
   getSettingViews,
   listSettings,
+  revertSetting,
   setSetting,
   writeSetting,
 } from '../src/repositories/settings.js';
@@ -114,6 +115,33 @@ describe('the settings repository', () => {
     expect(() =>
       // @ts-expect-error — the type rejects it too; this is the runtime half.
       writeSetting(db, 'P80_API_PORT', 9999),
+    ).toThrow(/not an editable setting/);
+  });
+
+  it('reports what a revert removed, and whether there was anything to remove', () => {
+    // ADR 0026. `cleared` is the half that matters to a caller putting state back: it tells
+    // "the override is gone" apart from "there was never one", which is the distinction
+    // `scripts/smoke.sh` needs to restore exactly what it found.
+    db = createTempDatabase();
+    writeSetting(db, 'P80_ASR_MODEL', 'medium');
+
+    expect(revertSetting(db, 'P80_ASR_MODEL')).toEqual({
+      previous: 'medium',
+      cleared: true,
+    });
+    expect(revertSetting(db, 'P80_ASR_MODEL')).toEqual({
+      previous: undefined,
+      cleared: false,
+    });
+  });
+
+  it('refuses to revert a key that nothing would read', () => {
+    // Same refusal as the write, for the same reason: clearing a boot key would appear to
+    // work and change nothing.
+    db = createTempDatabase();
+    expect(() =>
+      // @ts-expect-error — the type rejects it too; this is the runtime half.
+      revertSetting(db, 'P80_API_PORT'),
     ).toThrow(/not an editable setting/);
   });
 });

@@ -4,6 +4,7 @@
 **Date:** 2026-08-09
 **Amends:** ADR 0007 (which client carries the settings surface), ADR 0015 (how the media
 root is chosen), ADR 0016 (how ASR options reach the sidecar)
+**Amended by:** ADR 0026 (a written key can be reverted to its environment value)
 
 ## Context
 

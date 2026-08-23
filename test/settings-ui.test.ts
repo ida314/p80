@@ -49,4 +49,26 @@ describe('the settings page', () => {
     expect(SETTINGS).toMatch(/hint--warning/);
     expect(SETTINGS).toMatch(/row\.invalid !== undefined/);
   });
+
+  it('offers the revert only where there is an override to drop', () => {
+    // ADR 0026 §3. On a row already tracking the environment there is nothing to revert,
+    // and a disabled button would imply otherwise. The control lives inside the
+    // `source === 'database'` branch, next to the value it would restore.
+    const overridden = SETTINGS.indexOf("row.source === 'database' && (");
+    expect(overridden).toBeGreaterThan(-1);
+    expect(SETTINGS.slice(overridden, overridden + 700)).toMatch(/onClick=\{onRevert\}/);
+  });
+
+  it('reverts through the draft, so the media root keeps its confirmation', () => {
+    /**
+     * The tempting shortcut is a button that PUTs `null` on the spot. It would work for
+     * six of the seven keys and lose the orphan count on the seventh: reverting the media
+     * root can strand a whole library, and the 409 that says so is only useful if there is
+     * an unsaved change to attach the confirmation to.
+     */
+    expect(SETTINGS).toMatch(/setDrafts\(\(current\) => \(\{ \.\.\.current, \[key\]: null \}\)\)/);
+    // `??` here would read a null draft as an absent one and silently drop the revert.
+    expect(SETTINGS).not.toMatch(/drafts\[row\.key\] \?\? row\.value/);
+    expect(SETTINGS).toMatch(/row\.key in drafts/);
+  });
 });

@@ -313,8 +313,9 @@ export const preflightMediaRoot = (path: string) =>
  * videos will stop resolving under the new media root. It is not a force flag, and the
  * page only sends it after showing the number.
  */
+/** `null` reverts a key to its environment value rather than writing one (ADR 0026). */
 export const updateSettings = (
-  settings: Record<string, string | number | boolean>,
+  settings: Record<string, string | number | boolean | null>,
   acknowledgeOrphans = false,
 ) => send<SettingsPayload>('PUT', '/api/settings', { settings, acknowledgeOrphans });
 

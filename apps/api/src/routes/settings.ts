@@ -19,6 +19,7 @@ import {
   ensureProfile,
   getSettingViews,
   listVideoMediaRefs,
+  revertSetting,
   setMediaLocation,
   writeSetting,
   type DatabaseHandle,
@@ -88,7 +89,16 @@ export async function registerSettingsRoutes(
     {
       schema: {
         body: z.object({
-          settings: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+          /**
+           * `null` reverts a key to its environment value rather than writing one
+           * (ADR 0026 §1). It is a value in the same batch rather than a second route,
+           * because reverting one ASR option while writing two others is an ordinary edit
+           * of one form.
+           */
+          settings: z.record(
+            z.string(),
+            z.union([z.string(), z.number(), z.boolean(), z.null()]),
+          ),
           /**
            * Required when the media root would stop videos resolving. Named for what it
            * acknowledges rather than `force`: the user is confirming a specific, counted
@@ -105,10 +115,19 @@ export async function registerSettingsRoutes(
         throw P80Error.badRequest('No settings were named in the request.');
       }
 
+      // The media root as it stands once this request has been applied, whether that came
+      // from a write or a revert. Null when the request did not name it.
+      let settledRoot: string | null = null;
+
       // Validate every key before writing any of them.
       const validated: Array<[EditableSettingKey, string | number | boolean]> = [];
+      const reverted: EditableSettingKey[] = [];
       for (const [key, raw] of entries) {
         requireEditable(key);
+        if (raw === null) {
+          reverted.push(key);
+          continue;
+        }
         const parsed = SETTING_DEFINITIONS[key].schema.safeParse(raw);
         if (!parsed.success) {
           throw new P80Error(
@@ -120,10 +139,24 @@ export async function registerSettingsRoutes(
         validated.push([key, parsed.data]);
       }
 
+      /**
+       * What the media root would become, whichever way it was named.
+       *
+       * A revert is not the safe direction (ADR 0026 §2): the environment value can be a
+       * directory that has since been removed, or one holding none of the library. So it
+       * runs the same validation and the same orphan count as a write, and the only thing
+       * that differs afterwards is whether a row is deleted or inserted.
+       */
       const mediaRoot = validated.find(([key]) => key === 'P80_MEDIA_ROOT');
-      if (mediaRoot) {
-        const proposed = String(mediaRoot[1]);
-        const result = validateMediaRoot(proposed, config.P80_STORAGE_PATH);
+      const revertsMediaRoot = reverted.includes('P80_MEDIA_ROOT');
+      const proposedRoot = mediaRoot
+        ? String(mediaRoot[1])
+        : revertsMediaRoot
+          ? config.P80_MEDIA_ROOT
+          : null;
+
+      if (proposedRoot !== null) {
+        const result = validateMediaRoot(proposedRoot, config.P80_STORAGE_PATH);
         if (!result.ok) {
           throw new P80Error(
             ERROR_CODES.INVALID_MEDIA_ROOT,
@@ -151,8 +184,10 @@ export async function registerSettingsRoutes(
 
         // Store the normalised absolute form, not the string as typed. `/library/` and
         // `/library` are the same directory and must not be two different roots — the
-        // containment check compares string prefixes.
-        mediaRoot[1] = result.path;
+        // containment check compares string prefixes. A revert stores nothing, so it takes
+        // the normalised path only for the recompute below.
+        if (mediaRoot) mediaRoot[1] = result.path;
+        settledRoot = result.path;
       }
 
       for (const [key, value] of validated) {
@@ -170,8 +205,23 @@ export async function registerSettingsRoutes(
         }
       }
 
-      if (mediaRoot) {
-        recomputeMediaMissing(handle, String(mediaRoot[1]));
+      for (const key of reverted) {
+        const { previous, cleared } = revertSetting(handle, key);
+        // `cleared: false` means there was no row. Reported rather than silent, because
+        // "reverted" and "was never overridden" look identical in the response.
+        const next = config[key];
+        if (key === 'P80_MEDIA_ROOT') {
+          request.log.warn(
+            { setting: key, previous: previous ?? next, next, cleared },
+            'media root reverted to the environment',
+          );
+        } else {
+          request.log.info({ setting: key, next, cleared }, 'setting reverted');
+        }
+      }
+
+      if (settledRoot !== null) {
+        recomputeMediaMissing(handle, settledRoot);
       }
 
       return { settings: getSettingViews(handle, config) };

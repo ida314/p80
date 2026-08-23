@@ -179,7 +179,10 @@ async function listSettings(): Promise<number> {
     }
   }
 
-  process.stdout.write('\n* overridden here; `p80 settings set <key> <value>` to change\n');
+  process.stdout.write(
+    '\n* overridden here; `p80 settings set <key> <value>` to change,\n' +
+      '  `p80 settings revert <key>` to drop the override and follow .env.local again\n',
+  );
   return 0;
 }
 
@@ -191,11 +194,22 @@ async function listSettings(): Promise<number> {
  */
 async function setSetting(
   key: string,
-  raw: string,
+  raw: string | null,
   acknowledgeOrphans: boolean,
 ): Promise<number> {
+  // `null` reverts the key to its environment value rather than writing one (ADR 0026).
+  // Sent down the same path as a write because it is refused, counted, and confirmed the
+  // same way — the media root can orphan a library in either direction.
   const value =
-    raw === 'true' ? true : raw === 'false' ? false : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw;
+    raw === null
+      ? null
+      : raw === 'true'
+        ? true
+        : raw === 'false'
+          ? false
+          : /^-?\d+(\.\d+)?$/.test(raw)
+            ? Number(raw)
+            : raw;
 
   const response = await fetch(`${base}/api/settings`, {
     method: 'PUT',
@@ -219,7 +233,7 @@ async function setSetting(
     return 1;
   }
 
-  process.stdout.write(`${key} set.\n`);
+  process.stdout.write(raw === null ? `${key} reverted to .env.local.\n` : `${key} set.\n`);
   return 0;
 }
 
@@ -344,8 +358,10 @@ function usage(): number {
       '  due       how many cards are due, and today\'s new-item allowance',
       '',
       '  settings set <key> <value> [--acknowledge-orphans]',
-      '            change one setting. --acknowledge-orphans confirms a media root',
-      '            under which some videos would stop resolving.',
+      '  settings revert <key> [--acknowledge-orphans]',
+      '            change one setting, or drop its override so it follows .env.local',
+      '            again. --acknowledge-orphans confirms a media root under which some',
+      '            videos would stop resolving — either direction can orphan a library.',
       '',
       'Media surfaces — review sessions, the video loop, video detail — are in the',
       'browser client, because playback needs a video surface (ADR 0007).',
@@ -369,13 +385,22 @@ const exitCode = await (async () => {
     case 'due':
       return due();
     case 'settings': {
+      const acknowledge = process.argv.includes('--acknowledge-orphans');
+      if (process.argv[3] === 'revert') {
+        const key = process.argv[4];
+        if (!key) {
+          process.stderr.write('Usage: p80 settings revert <key>\n');
+          return 1;
+        }
+        return setSetting(key, null, acknowledge);
+      }
       if (process.argv[3] !== 'set') return listSettings();
       const [key, value] = [process.argv[4], process.argv[5]];
       if (!key || value === undefined) {
         process.stderr.write('Usage: p80 settings set <key> <value>\n');
         return 1;
       }
-      return setSetting(key, value, process.argv.includes('--acknowledge-orphans'));
+      return setSetting(key, value, acknowledge);
     }
     case undefined:
     case '--help':
