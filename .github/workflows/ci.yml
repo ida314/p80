@@ -60,8 +60,9 @@ jobs:
 
       - run: pnpm test
 
-      # `tsc --noEmit && vite build`. It re-runs a typecheck, and it stays: this is the gate
-      # on `apps/web/dist`, the one artifact a deploy actually produces.
+      # `tsc --noEmit && vite build`. It re-runs a typecheck, and it stays: since ADR 0025
+      # the browser client is built inside the node image rather than on the deploy host, so
+      # this is the cheapest place a broken client build is still caught early.
       - run: pnpm build
 
   python:
@@ -83,3 +84,38 @@ jobs:
       - run: uv sync --project services/nlp --frozen
 
       - run: uv run --project services/nlp pytest services/nlp/tests
+
+  images:
+    name: container images
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built, never pushed and never run. This runner is x86_64 and the deploy host is
+      # aarch64, so the `better-sqlite3` binding compiled here is not the one that ships —
+      # ADR 0022's "that machine is not a build machine" cuts both ways. What this catches
+      # is the failure mode that actually happens: a Dockerfile that stops building because
+      # a path moved, a manifest was added, or a base image changed underneath it.
+      #
+      # No registry, no cache export, no secret. Rule 15 is untouched for the same reason
+      # the rest of this workflow leaves it untouched: none of it is P80 running.
+      - name: node image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.node
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: nlp image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/nlp
+          file: deploy/docker/Dockerfile.nlp
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

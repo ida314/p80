@@ -12,9 +12,14 @@
 # The code rolls back automatically. The database never does — see the note above
 # `rollback`, and ADR 0022 for why the deploy is a pull rather than something that listens.
 #
-# Installing the units in the first place is scripts/service-install.sh. This script assumes
-# they exist and deliberately does not touch them: they name an absolute `node` path, and
-# changing Node versions is what the installer is for.
+# Since ADR 0025 the deployed artifact is a pair of images rather than a checkout that the
+# services are read out of. That is what makes the rollback below cheap: the previous
+# version is a tag that still exists, not a rebuild that has to succeed while something is
+# already going wrong.
+#
+# Installing the unit in the first place is scripts/service-install.sh. This script assumes
+# it exists and deliberately does not touch it: it names an absolute `docker` path, and
+# changing that is what the installer is for.
 
 set -uo pipefail
 
@@ -81,19 +86,31 @@ rollback() {
     git checkout --force "${BRANCH}" >/dev/null 2>&1 || note "WARNING: could not return to ${BRANCH}."
   fi
   git reset --hard "${PREV_SHA}" >/dev/null 2>&1 || note "WARNING: could not reset the tree."
+  # The host's node_modules is not what runs — it is what the gates run against. Restoring
+  # it keeps the next attempt honest rather than un-deploying anything.
   pnpm install --frozen-lockfile >/dev/null 2>&1 || note "WARNING: pnpm install failed during rollback."
 
-  # Only rebuild and restart if the running system had been changed. Failing at the gates
-  # means nothing was deployed, so there is nothing to undo but the checkout.
+  # Only put images back and restart if the running system had been changed. Failing at the
+  # gates means nothing was deployed, so there is nothing to undo but the checkout.
   case "${STAGE}" in
-    build|restart|verify)
-      pnpm build >/dev/null 2>&1 || note "WARNING: pnpm build failed during rollback."
-      systemctl --user restart p80.target || note "WARNING: could not restart p80.target."
+    restart|verify)
+      if point_images_at "${PREV_SHA:0:12}"; then
+        ok "images restored to ${PREV_SHA:0:12}"
+      else
+        # No image for that commit — this was the first deploy after the migration, or the
+        # tags have been pruned. Rebuilding is slower and can itself fail, which is exactly
+        # why it is the fallback and not the mechanism.
+        note "no image tagged ${PREV_SHA:0:12}; rebuilding from the restored checkout"
+        compose build >/dev/null 2>&1 || note "WARNING: rebuild failed during rollback."
+        tag_images "${PREV_SHA:0:12}" >/dev/null 2>&1 || true
+        point_images_at "${PREV_SHA:0:12}" >/dev/null 2>&1 || true
+      fi
+      systemctl --user restart p80.service || note "WARNING: could not restart p80.service."
       if wait_for_health; then
         ok "previous version is back and healthy"
       else
         note "WARNING: the previous version is not answering either. Check:"
-        note "         journalctl --user -u p80-api -n 50"
+        note "         journalctl --user -u p80 -n 50"
       fi
       ;;
     *)
@@ -104,14 +121,44 @@ rollback() {
   if [[ -n "${SNAPSHOT}" ]]; then
     printf '\n'
     note "The database was NOT rolled back. If a migration ran and you need it undone:"
-    note "    systemctl --user stop p80.target"
+    note "    systemctl --user stop p80.service"
     note "    cp ${SNAPSHOT} ${DB_PATH}"
-    note "    systemctl --user start p80.target"
+    note "    systemctl --user start p80.service"
     note "That snapshot is tagged, so retention will never prune it."
   fi
 }
 
 fail() { rollback; die "$*"; }
+
+# --- images ------------------------------------------------------------------------
+#
+# Two images, tagged twice. `:<sha>` is the durable name — it is what a rollback reaches
+# for — and `:dev` is the moving pointer the compose file resolves by default, so that the
+# installed unit needs no argument and cannot drift from what was deployed.
+IMAGES=(p80-node p80-nlp)
+
+compose() {
+  COMPOSE_ENV_FILES="${REPO}/.env.local" docker compose -f "${REPO}/docker-compose.yml" "$@"
+}
+
+tag_images() {
+  local sha="$1" image
+  for image in "${IMAGES[@]}"; do
+    docker tag "${image}:dev" "${image}:${sha}" || return 1
+  done
+}
+
+# Moves `:dev` onto an existing per-commit tag. Fails without side effects when any of the
+# images is missing, so the caller can fall back rather than half-apply a rollback.
+point_images_at() {
+  local sha="$1" image
+  for image in "${IMAGES[@]}"; do
+    docker image inspect "${image}:${sha}" >/dev/null 2>&1 || return 1
+  done
+  for image in "${IMAGES[@]}"; do
+    docker tag "${image}:${sha}" "${image}:dev" || return 1
+  done
+}
 
 step() {
   local label="$1"; shift
@@ -124,9 +171,14 @@ step() {
 say "Checking prerequisites"
 
 [[ -d /run/systemd/system ]] || die "systemd is not the init system here."
-for tool in git node pnpm curl systemctl; do
+# node and pnpm are here for the gates, which run on the host against this machine's real
+# config and its own better-sqlite3 binding. Nothing that gets deployed needs them.
+for tool in git node pnpm curl systemctl docker; do
   command -v "$tool" >/dev/null || die "${tool} is not on PATH."
 done
+docker compose version >/dev/null 2>&1 \
+  || die "\`docker compose\` is unavailable. This needs Compose v2 or later, as a plugin."
+docker info >/dev/null 2>&1 || die "the container daemon is not reachable"
 
 # One deploy at a time. Two racing each other would interleave a checkout with a build.
 if command -v flock >/dev/null; then
@@ -136,12 +188,13 @@ else
   note "WARNING: no flock, so concurrent deploys are not prevented."
 fi
 
-systemctl --user list-unit-files p80.target >/dev/null 2>&1 \
+systemctl --user list-unit-files p80.service >/dev/null 2>&1 \
   || die "P80 is not installed as a service here. Install it first:
       bash scripts/service-install.sh"
 
 [[ -f "${REPO}/.env.local" ]] || die "no .env.local at ${REPO}.
-  The units load it with no fallback, so a deploy would restart into a stopped service."
+  Compose resolves the media-root mount from it and refuses to start without one, so a
+  deploy would restart into a stopped service."
 
 # Read the file the way loadConfig() does — process environment wins, quotes stripped,
 # nothing interpolated. This is a config file, not a shell script, so it is never sourced.
@@ -176,9 +229,9 @@ wait_for_health() {
 # `pnpm dev` and the installed services want the same port and cannot both have it. If
 # something is answering while the unit is not the thing running, a restart will land in a
 # bind-failure loop that reads as a broken API rather than as two copies of P80.
-if [[ "$(systemctl --user is-active p80-api.service 2>/dev/null)" != "active" ]] \
+if [[ "$(systemctl --user is-active p80.service 2>/dev/null)" != "active" ]] \
    && curl -sf "${HEALTH}" >/dev/null 2>&1; then
-  die "something is already serving port ${API_PORT}, and it is not the p80-api unit.
+  die "something is already serving port ${API_PORT}, and it is not the p80 unit.
   If that is \`pnpm dev\`, stop it: the two cannot run at once."
 fi
 
@@ -194,32 +247,29 @@ if [[ -z "${target_ref}" ]] && [[ -n "$(git status --porcelain)" ]]; then
   changes from the ones it is undoing."
 fi
 
-# Where the sidecar lives decides whether its dependencies are ours to update. Same rule
-# and the same loopback list as scripts/service-install.sh and scripts/dev.mjs.
+# The sidecar is a compose service now, so a deploy no longer has an environment of its own
+# to keep in step — which is the defect ADR 0025 exists to remove. What is still worth
+# saying is when the stack builds one nothing will talk to.
 NLP_URL="$(env_value P80_NLP_BASE_URL)"; NLP_URL="${NLP_URL:-http://127.0.0.1:5181}"
 NLP_HOST="${NLP_URL#*://}"; NLP_HOST="${NLP_HOST%%/*}"; NLP_HOST="${NLP_HOST%%:*}"
-NLP_IS_LOCAL=0
 case "${NLP_HOST}" in
-  127.0.0.1|localhost|::1|'[::1]') NLP_IS_LOCAL=1 ;;
+  127.0.0.1|localhost|::1|'[::1]') note "sidecar     local, on ${NLP_URL}" ;;
+  *) note "sidecar     REMOTE, at ${NLP_URL} — the compose stack still starts a local one,"
+     note "            which nothing will use. Remove it from docker-compose.yml, or point"
+     note "            P80_NLP_BASE_URL back at loopback." ;;
 esac
-if (( NLP_IS_LOCAL )); then
-  command -v uv >/dev/null || die "uv is not on PATH, and the NLP sidecar runs here."
-  note "sidecar     local, on ${NLP_URL}"
-else
-  note "sidecar     REMOTE, at ${NLP_URL} — its dependencies are not this deploy's business."
-fi
 
 if (( dry_run )); then
   say "Dry run — nothing below has happened"
   if [[ -n "${target_ref}" ]]; then note "checkout ${target_ref}"
   elif (( do_pull )); then          note "git fetch origin && git merge --ff-only origin/${BRANCH}"
   else                              note "(no pull — deploy the tree at ${PREV_SHA:0:12})"; fi
-  note "pnpm install --frozen-lockfile"
-  (( NLP_IS_LOCAL )) && note "uv sync --project services/nlp --frozen"
+  note "pnpm install --frozen-lockfile        # for the gates, not for the deploy"
   if (( do_tests )); then note "pnpm -r typecheck && pnpm test"; else note "(gates skipped)"; fi
-  note "pnpm build"
+  note "docker compose build                  # then tag both images with the commit"
   note "pnpm db:backup --reason predeploy"
-  note "systemctl --user restart p80.target   # runs p80-migrate.service"
+  note "docker tag <image>:<sha> <image>:dev"
+  note "systemctl --user restart p80.service  # compose up; the migrate service runs first"
   note "poll ${HEALTH}"
   (( do_smoke )) && note "bash scripts/smoke.sh"
   printf '\n'
@@ -266,11 +316,11 @@ fi
 # --- dependencies ------------------------------------------------------------------
 
 STAGE=deps
-say "Installing dependencies"
+say "Installing dependencies for the gates"
+# Only for the gates. Nothing deployed reads this directory — the services run out of the
+# image, which builds its own. There is deliberately no `uv sync` here any more: the
+# sidecar's environment is a build instruction now, so a deploy has no way to prune it.
 step "pnpm install" pnpm install --frozen-lockfile
-if (( NLP_IS_LOCAL )); then
-  step "uv sync" uv sync --project services/nlp --frozen
-fi
 
 # --- gates -------------------------------------------------------------------------
 #
@@ -291,16 +341,19 @@ fi
 
 # --- build -------------------------------------------------------------------------
 
-STAGE=build
-say "Building the browser client"
-# ADR 0021: a rebuild is a deploy step. The API serves whatever is in apps/web/dist.
-step "pnpm build" pnpm build
+STAGE=images
+say "Building images"
+# The browser client is built inside the node image, so there is no `pnpm build` here.
+# Building changes nothing that is running — the containers keep serving the old image
+# until `:dev` moves, below — which is why a failure at this stage needs no rollback.
+step "docker compose build" compose build
+step "tag ${NEW_SHA:0:12}" tag_images "${NEW_SHA:0:12}"
 
 # --- snapshot ----------------------------------------------------------------------
 
 STAGE=restart
 say "Snapshotting the database"
-# Before the restart, because the restart runs p80-migrate.service and a migration is the
+# Before the restart, because the restart runs the migrate container and a migration is the
 # one step here that cannot be undone. `--reason` tags it, and tagged snapshots are never
 # pruned by retention.
 SNAPSHOT="$(pnpm --silent db:backup --reason predeploy | tail -n 1)"
@@ -313,26 +366,35 @@ ok "${SNAPSHOT}"
 # --- restart -----------------------------------------------------------------------
 
 say "Restarting P80"
-# Restart, not start: it is the restart that re-runs the oneshot migrate unit that the API
-# and worker order themselves after.
-step "systemctl restart p80.target" systemctl --user restart p80.target
+# Moving `:dev` is the deploy. Everything before this point was preparation that the running
+# system could not see, and this is the first line whose effect it can.
+step "point :dev at ${NEW_SHA:0:12}" point_images_at "${NEW_SHA:0:12}"
+# Restart, not start: it is the restart that re-runs the one-shot migrate service that the
+# API and worker order themselves after.
+step "systemctl restart p80.service" systemctl --user restart p80.service
 
 STAGE=verify
 if wait_for_health; then
   ok "healthy at ${HEALTH}"
 else
   fail "the API did not become healthy within 30s.
-  journalctl --user -u p80-api -n 50"
+  journalctl --user -u p80 -n 50"
 fi
 
-# A unit that started and then died leaves health passing for a moment and the system
-# broken. Ask systemd directly rather than trusting the poll alone.
-for unit in p80-migrate.service p80-api.service p80-worker.service; do
-  state="$(systemctl --user is-active "${unit}" 2>/dev/null)"
-  case "${state}" in
-    active) ok "${unit}" ;;
-    *) fail "${unit} is ${state}. journalctl --user -u ${unit} -n 50" ;;
-  esac
+# A container that started and then died leaves health passing for a moment and the system
+# broken. Ask the daemon directly rather than trusting the poll alone. The migrate service
+# is deliberately not in this list: it is a one-shot and being exited is its success.
+state="$(systemctl --user is-active p80.service 2>/dev/null)"
+[[ "${state}" == active ]] || fail "p80.service is ${state}. journalctl --user -u p80 -n 50"
+ok "p80.service"
+
+running="$(compose ps --services --status running 2>/dev/null || true)"
+for service in api worker nlp; do
+  if grep -qx "${service}" <<<"${running}"; then
+    ok "${service}"
+  else
+    fail "the ${service} container is not running. docker compose logs ${service}"
+  fi
 done
 
 # --- smoke -------------------------------------------------------------------------
@@ -350,7 +412,8 @@ say "Deployed"
 note "at        $(git rev-parse HEAD | cut -c1-12)"
 note "snapshot  ${SNAPSHOT}"
 note "open      http://127.0.0.1:${API_PORT}"
-note "logs      journalctl --user -u p80-api -f"
+note "image     $(git rev-parse HEAD | cut -c1-12)"
+note "logs      journalctl --user -u p80 -f"
 
 }
 

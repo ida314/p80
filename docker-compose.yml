@@ -1,0 +1,130 @@
+# P80 as containers (ADR 0025).
+#
+# Four services and a one-shot, all sharing the host's network namespace so that every
+# process binds 127.0.0.1 itself rather than relying on a publish flag to mean the same
+# thing (CLAUDE.md rule 13).
+#
+# Every invocation needs P80's own environment file, and needs it twice over, because
+# compose reads two different things from two different places:
+#
+#   - `env_file:` below populates the *container's* environment.
+#   - `${...}` substitution in this file reads compose's own environment file, which
+#     defaults to `.env` and is not it.
+#
+# So:
+#
+#   COMPOSE_ENV_FILES=.env.local docker compose up -d nlp
+#
+# `--env-file .env.local` does the same thing for one invocation.
+
+# Shared by every service that runs the TypeScript half of P80. They are one image with
+# four entry points, exactly as they are four systemd units today.
+x-node: &node
+  image: p80-node:${P80_IMAGE_TAG:-dev}
+  build:
+    context: .
+    dockerfile: deploy/docker/Dockerfile.node
+  network_mode: host
+  user: "${P80_UID:-1000}:${P80_GID:-1000}"
+  env_file:
+    - .env.local
+  environment:
+    # `.env.local` names these as absolute host paths, which is right for a process running
+    # out of the checkout and meaningless inside an image. Overriding them here rather than
+    # editing that file keeps one environment file describing both ways of running P80:
+    # `loadConfig` layers the process environment over the file, so these win.
+    P80_DB_PATH: /app/data/p80.db
+    P80_STORAGE_PATH: /app/data/storage
+  volumes:
+    # Read-write, unlike the sidecar's: the API receives uploads into `<media root>/uploads/`
+    # and its staging directory, which rule 3 makes the only place P80 writes media at all.
+    - ${P80_MEDIA_ROOT:?set P80_MEDIA_ROOT in .env.local}:${P80_MEDIA_ROOT}:rw
+    # The database, its write-ahead log, the stored transcripts, and the backups. The one
+    # directory whose contents must outlive every container here.
+    - ./data:/app/data
+
+services:
+  nlp:
+    image: p80-nlp:${P80_IMAGE_TAG:-dev}
+    build:
+      context: ./services/nlp
+      dockerfile: ../../deploy/docker/Dockerfile.nlp
+
+    # CLAUDE.md rule 13, kept literally true rather than true-by-configuration. The sidecar
+    # reads `P80_BIND_HOST` from `.env.local` and binds `127.0.0.1` in the host's own
+    # network namespace, exactly as it does today. The alternative — a bridge network,
+    # `0.0.0.0` inside, and a publish flag deciding what that means — would move the
+    # loopback guarantee out of the process and into this file.
+    network_mode: host
+
+    # The container has to be able to read the user's media. Default 1000:1000 covers the
+    # single-user Linux case; set P80_UID/P80_GID in `.env.local` on a machine where the
+    # owner of the media root is somebody else. P80 has no notion of a service account —
+    # ADR 0021 rejected one and containers do not bring the reason back.
+    user: "${P80_UID:-1000}:${P80_GID:-1000}"
+
+    env_file:
+      - .env.local
+
+    volumes:
+      # Identical absolute path on both sides, deliberately. The worker resolves a media
+      # path, checks it is contained under the media root, and sends the absolute result
+      # over the wire; `services/nlp/src/p80_nlp/main.py` is explicit that it opens what it
+      # is handed rather than re-deriving containment against a root it does not own. The
+      # two processes therefore have to agree about what a path means.
+      #
+      # Read-only, because the sidecar only reads. Rule 3 says `<media root>/uploads/` is
+      # the one directory P80 writes media into and that is the API's job — here that is a
+      # property of the mount rather than an observation about the code.
+      - ${P80_MEDIA_ROOT:?set P80_MEDIA_ROOT in .env.local}:${P80_MEDIA_ROOT}:ro
+
+      # Shared with whatever else on this machine downloads models. Not a named volume: the
+      # cache already exists on the host, and a fresh one would mean re-downloading the
+      # speech model on first transcription.
+      - ${HOME:?HOME must be set}/.cache/huggingface:/hf
+
+    restart: unless-stopped
+    stop_grace_period: 120s
+
+  # Runs before the API and the worker, and they wait for it to succeed. Both of them also
+  # migrate on start and tolerate losing the race; this exists so that a checksum mismatch
+  # is one failed thing with a name, rather than two services crash-looping.
+  migrate:
+    <<: *node
+    command: ["packages/database/src/cli/migrate.ts"]
+    restart: "no"
+
+  api:
+    <<: *node
+    command: ["apps/api/src/main.ts"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.P80_API_PORT||5180)+'/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  worker:
+    <<: *node
+    command: ["apps/worker/src/main.ts"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # A job that outlives this is reclaimed by the next worker through `claimed_by` and
+    # `claimed_at`, so the ceiling is about draining cleanly, not about correctness.
+    stop_grace_period: 60s
+
+  # Deliberately behind a profile, so `up` never starts it. It is a one-shot invoked by the
+  # backup timer, and — as with the systemd unit it replaces — it is worth being able to run
+  # when the rest of P80 is not.
+  backup:
+    <<: *node
+    command: ["packages/database/src/cli/backup.ts"]
+    restart: "no"
+    profiles: ["tools"]

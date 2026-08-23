@@ -1,8 +1,16 @@
 # ADR 0021 — Running P80 as a service
 
-**Status:** Accepted
+**Status:** Superseded by 0025
 **Date:** 2026-08-09
 **Amends:** ADR 0007 (where the browser client is served from, once it is built)
+
+> **Superseded by [ADR 0025](0025-containerising-p80.md) (2026-08-23), in part.**
+> §1 — user units rather than containers — is reversed: P80 now deploys as containers under
+> one user unit. Three of the seven rows in the comparison table below expired, and ADR 0025
+> answers all seven. **§2 and §3 survive unchanged** and ADR 0025 relies on both: the API
+> still serves the built browser client on its own port, and an entry point is still invoked
+> directly rather than through a package manager, for the signal reason given here. The
+> migration one-shot and the scheduled backup also survive, as a compose service and a timer.
 
 ## Context
 

@@ -1,8 +1,16 @@
 # ADR 0022 — How a change reaches the running system
 
-**Status:** Accepted
+**Status:** Accepted; amended by 0025
 **Date:** 2026-08-15
 **Builds on:** ADR 0021 (P80 runs as systemd user units; the API serves the built client)
+
+> **Amended by [ADR 0025](0025-containerising-p80.md) (2026-08-23).** Every decision here
+> stands — checking is hosted and deploying is a local, pull-based command; the gates run
+> twice; the code rolls back and the database never does. What changed is the artifact.
+> Deploying now builds two images and tags them with the commit, and rolling back points a
+> tag at the previous pair rather than rebuilding from a restored checkout. The claim in §1
+> that *"there is no artifact"* is the one sentence 0025 makes false, and it made the
+> rollback better rather than worse.
 
 ## Context
 

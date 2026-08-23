@@ -1,0 +1,79 @@
+# The NLP sidecar as an image (ADR 0025).
+#
+# Build context is `services/nlp`, not the repository root: the sidecar shares no source
+# with the TypeScript packages, and a context that excluded nothing would ship an 87 GB
+# model cache to the daemon.
+#
+#   docker build -f deploy/docker/Dockerfile.nlp -t p80-nlp:dev services/nlp
+#
+# The point of this image is that its dependency set cannot drift. `uv sync` prunes
+# anything outside the extras it was asked for, so on a long-lived venv a deploy that
+# forgot `--extra asr` silently uninstalled faster-whisper and the next transcription job
+# failed `ASR_UNAVAILABLE` — see ADR 0025. Here the extra is a build instruction. There is
+# nothing for a later command to prune.
+
+# 3.13 rather than 3.14: `pyproject.toml` bounds the interpreter at `<3.14` because spaCy's
+# binary wheels lag new CPython releases, and Stage 4 installs `de_core_news_lg` into this
+# same environment. `.python-version` pins the same number for the host venv.
+FROM python:3.13-slim AS build
+
+# Pinned, not `:latest`. A resolver that changes under a rebuild is the same class of
+# problem this image exists to remove.
+COPY --from=ghcr.io/astral-sh/uv:0.11.19 /uv /usr/local/bin/uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
+
+WORKDIR /app
+
+# Dependencies before source, so editing a handler does not re-resolve CTranslate2 and
+# torch. `README.md` is copied with the manifests because `pyproject.toml` names it as the
+# project readme and the build backend reads it.
+COPY pyproject.toml uv.lock README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --extra asr
+
+COPY src ./src
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --extra asr
+
+
+FROM python:3.13-slim AS runtime
+
+# `docs/SETUP.md` declares ffmpeg a dependency for decoding audio, and this image is meant
+# to satisfy the documented contract rather than the narrowest path through it. Note what
+# it is *not* for: faster-whisper decodes through PyAV's bundled libraries and never
+# execs a binary. It is whisperx's `load_audio` that shells out — the `align` extra, which
+# this image does not install and which `P80_ASR_ALIGN` can ask for at runtime.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=build /app /app
+
+ENV PATH="/app/.venv/bin:${PATH}"
+ENV PYTHONUNBUFFERED=1
+
+# Where roughly 1.5 GB of speech model lives, mounted from the host so that a container
+# restart is not a re-download. `deploy/systemd/p80-nlp.service.in` pins the same variable
+# for the same reason; this is that decision, moved.
+ENV HF_HOME=/hf
+
+# No user is created here, because compose runs this image as the host user's own uid:gid
+# so it can read the media root. That uid has no passwd entry, so `HOME` would otherwise be
+# unset and a library reaching for `~` would land somewhere unwritable.
+ENV HOME=/tmp
+
+# The host's loopback, because compose runs this with `network_mode: host` — the sidecar
+# binds `127.0.0.1` itself rather than binding `0.0.0.0` and relying on a publish flag to
+# make that true (CLAUDE.md rule 13).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('P80_NLP_PORT','5181')+'/health').read()"
+
+# Exec form, and the console script directly rather than `uv run` or a shell wrapper. Same
+# reasoning as `node --import tsx` over `pnpm --filter` in the systemd units: uvicorn's
+# graceful shutdown only runs if uvicorn is the process that receives SIGTERM, and
+# transcription holds this process for minutes at a time.
+ENTRYPOINT ["/app/.venv/bin/p80-nlp"]

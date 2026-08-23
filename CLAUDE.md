@@ -276,7 +276,7 @@ pnpm db:backup    snapshot the SQLite file (VACUUM INTO, not a copy)
 pnpm dev:noop     enqueue a NOOP job so the worker has something to claim
 
 bash scripts/smoke.sh                                    end-to-end, against a running P80
-bash scripts/service-install.sh                          install as systemd user services
+bash scripts/service-install.sh                          build the images, install the unit
 bash scripts/deploy.sh                                   update the installed P80 (ADR 0022)
 pnpm --filter @p80/tui dev health|jobs|profile           the management client
 uv run --project services/nlp pytest services/nlp/tests  sidecar tests
@@ -287,8 +287,15 @@ start, and managed outside the dev command (§4). vLLM being down through Stages
 expected, not a misconfiguration. It starts the NLP sidecar only when `P80_NLP_BASE_URL`
 is loopback; pointed elsewhere it starts three processes and says so.
 
-**Installed, P80 is three units and a timer, not four processes** (ADR 0021). There is no
-web unit: the API serves the built client on its own port, so the deployed URL is
-`P80_API_PORT` while `pnpm dev` stays on `P80_WEB_PORT`, and the two cannot run at once.
-`systemctl --user status p80.target`, `journalctl --user -u p80-api -f`. If P80 appears to
-be running when you did not start it, that is why.
+**Installed, P80 is one systemd unit running four containers, not four processes**
+(ADR 0025, superseding ADR 0021). There is no web container: the API serves the built
+client on its own port, so the deployed URL is `P80_API_PORT` while `pnpm dev` stays on
+`P80_WEB_PORT`, and the two cannot run at once. `systemctl --user status p80.service`,
+`journalctl --user -u p80 -f`. If P80 appears to be running when you did not start it, that
+is why.
+
+The containers share the host's network namespace, so rule 13 stays a property of each
+process rather than of a publish flag, and every loopback URL keeps one meaning. Compose
+resolves the media-root mount from `.env.local`, which is not its default env file — so
+driving it by hand needs `COMPOSE_ENV_FILES=.env.local`. **`pnpm dev` is unchanged and
+still native**; containers are the deployment target only.

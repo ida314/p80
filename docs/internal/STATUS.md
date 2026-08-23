@@ -10,9 +10,9 @@
 **Current stage:** Stage 3 — Manual learning-item prototype (code-complete, four manual checks)
 **Also open:** Stage 2 and 2b, code-complete, six manual browser checks outstanding
 **Milestone:** M1 — First vertical slice
-**Running at:** <http://127.0.0.1:5180> as systemd user services (ADR 0021), and at
-<https://p80.tail2e282c.ts.net> over Tailscale (ADR 0023)
-**Last updated:** 2026-08-16
+**Running at:** <http://127.0.0.1:5180> as four containers under one systemd user unit
+(ADR 0025), and at <https://p80.tail2e282c.ts.net> over Tailscale (ADR 0023)
+**Last updated:** 2026-08-23
 
 ---
 
@@ -121,10 +121,10 @@ a developer's dotfile. Three regression tests in `packages/core/test/config.test
 This is why `smoke.sh` had not been run since the ADR 0015–0018 rewrite made
 `P80_MEDIA_ROOT` required: it needs a live API, and there had not been one.
 
-### Deployment (ADR 0021)
+### Deployment (ADR 0025, superseding ADR 0021)
 
-**P80 runs as systemd user services on the development machine.** Outside a stage; noted
-here per §5.1. Installed with `bash scripts/service-install.sh`.
+**P80 runs as four containers under one systemd user unit on the development machine.**
+Outside a stage; noted here per §5.1. Installed with `bash scripts/service-install.sh`.
 
 | What | State |
 |---|---|
@@ -269,6 +269,150 @@ smoke ran against a throwaway API+worker on `:5199` with its own database and me
 so the installed services and `/home/dylan/Videos` were untouched and migration 0003 has
 **not** been applied to the live database.
 
+### A silently disarmed sidecar, and a UI that could not say so (2026-08-22)
+
+**M1 ran.** A 7-minute German video uploaded from the laptop over Tailscale, 38.5 MB in five
+chunks, and `/home/dylan/Videos` is no longer empty — the thing the ten older manual checks
+were waiting on. The upload itself worked on the first try. What followed did not, and took
+three fixes.
+
+The video appeared stuck at "loading". It was not stuck: `INGEST_MEDIA` succeeded — hash,
+duration, the lot — and `TRANSCRIBE` then failed three times in 25 ms with
+`ASR_UNAVAILABLE`. `faster-whisper` was simply gone from `services/nlp/.venv`.
+
+| What | State |
+|---|---|
+| `deploy.sh` syncs `--inexact`; `test/deploy-parity.test.ts` guards it | **done** |
+| `listJobs` + `useLatestJob`; the upload panel follows `TRANSCRIBE` | **done** |
+| `VideoDetail` renders the job's real error instead of guessing | **done** |
+| `listJobs` orders `created_at DESC, id DESC`; `apps/api/test/jobs.test.ts` | **done** |
+| ASR extra reinstalled; `/health` reports `transcribe_available: true` | **done** |
+
+- **`scripts/deploy.sh` was uninstalling the ASR extra on every deploy.** `uv sync` is exact
+  by default and prunes anything outside the set it resolved; `service-install.sh` tells you
+  to build the venv *with* `--extra asr`, so the two disagreed and deploy ran more often. The
+  venv's site-packages mtime matched the 2026-08-16 deploy exactly. Now `--inexact`, which
+  preserves `align` too — `docs/SETUP.md` offers the two extras as independent choices, so a
+  hardcoded `--extra asr` would have half-fixed it. CI stays bare on purpose and the new test
+  asserts both halves.
+- **`smoke.sh` could not have caught it and still cannot.** Check 62 greps for the *key*
+  `"transcribe_available":`, not its value, because smoke has to pass on a base install.
+  Left alone deliberately; the deploy-parity test is the guard instead.
+- **The browser followed only the ingest job.** `TRANSCRIBE` is enqueued inside the worker,
+  long after the `202 { video, jobId }` went out, so its id was in no response the client
+  ever saw. Ingest succeeded, `<JobStatus>` renders nothing for a success, and the panel fell
+  silent while the real work had already failed. `GET /api/jobs?entityId=` was already in the
+  contract and already implemented — nothing needed adding to the API.
+- **`listJobs` had no tiebreak.** `ORDER BY created_at DESC` on millisecond timestamps, with
+  both new surfaces using `limit=1` to mean "the current attempt". Ids are ULIDs, so
+  `id DESC` makes it deterministic.
+
+**Effective ASR settings are not what `.env.local` says.** `P80_ASR_MODEL` had a `settings`
+row of `medium` overriding the environment's `large-v3`, and the sidecar's `/health` reports
+the *environment* value — so `/health` said `large-v3` while every job ran `medium`. Exactly
+the trap `CLAUDE.md` §4 warns about. Now `large-v3-turbo`: multilingual, and both faster and
+more accurate than `medium`.
+
+**Transcription is 3× faster than realtime on CPU, and no GPU is wanted.** The retried job
+finished 7:01 of audio in 134 s of wall clock — 0.32× realtime, `int8` on 20 aarch64 cores,
+*including* the one-time model download. 123 segments, 526 words, `detectedLanguage: de`,
+four `low_asr_confidence` warnings. Steady-state will be faster still, since `asr.py:240`
+reloads the model on every request.
+
+This retires most of the speed question before it was asked. `docs/SETUP.md` and ADR 0016
+both claim CPU is "roughly twenty times slower" and warn of a job that "looks like it is
+working for forty minutes" — measured against `large-v3`, and not true of `large-v3-turbo`
+here by two orders of magnitude. Both documents overstate the case and should be corrected
+against a real number rather than left as folklore; `P80_ASR_REQUIRE_GPU` defaulting to
+`true` is a refusal protecting against something this machine does not experience. Beam
+size, batching, and a CUDA build are all unnecessary at this speed. **ADR 0016's open
+question is now half-answered** — turbo's wall clock is recorded, its WER is not, and the
+comparison still needs the ADR 0006 corpus rather than one football broadcast.
+
+**`isJobStalled` misreports a queued job and was left alone.** It fires on `pending` past
+120 s and says "the worker process is not running", which is wrong when the single worker is
+simply busy with another transcription — now a realistic wait rather than a theoretical one.
+Re-dating the clock from `job.createdAt` was tried and reverted: it makes the wrong message
+appear *sooner*, and the case it would have helped does not arise, since the video page
+reads a settled job rather than polling one. Telling "no worker" from "worker busy" needs
+more than a clock.
+
+Three follow-ups, deliberately not done here: the retry bug (`failJob` ignores
+`P80Error.retryable` and `loop.ts` only sleeps when nothing was claimed, so a non-retryable
+failure burns all three attempts instantly and a retryable one re-runs with no backoff); a
+retry button, since `POST /api/jobs/:id/retry` exists and no client uses it; and caching
+`WhisperModel`, which `asr.py:240` currently constructs inside `transcribe()` on every
+request.
+
+**Next: Docker.** Agreed direction — all four processes, superseding ADR 0021. Not started,
+no ADR yet, container scope undecided. All GPU access on this machine goes through SIR on
+`:8000`, so the sidecar must not take a GPU directly and a CUDA CTranslate2 build is not the
+path. `deploy.sh --inexact` is the stopgap until the sidecar is an image with its extras
+baked in.
+
+## Containerised, in two steps (2026-08-23)
+
+**ADR 0025 accepted; ADR 0021 superseded in part.** §1 (user units over containers) is
+reversed. §2 (the API serves the built client) and §3 (entry points invoked directly, for
+signal delivery) survive and are relied on.
+
+| | Before | Now |
+|---|---|---|
+| Units | `p80.target` + migrate/api/worker/nlp + backup timer | `p80.service` + backup service/timer |
+| Processes | four, out of the checkout under `tsx` | four containers, same entry points |
+| Networking | loopback, directly | loopback, directly — `network_mode: host` |
+| Deploy artifact | the checkout | `p80-node` and `p80-nlp`, tagged with the commit |
+| Rollback | re-checkout, reinstall, rebuild, restart | retag `:dev`, restart |
+| Host needs | node, pnpm, uv, ffmpeg | a container runtime |
+
+Landed as two steps against the running system, each verified before the next:
+
+- **Step 1** — `deploy/docker/Dockerfile.nlp`, `services/nlp/.dockerignore`,
+  `docker-compose.yml`, `test/docker-parity.test.ts`. Swapped the unit for the container and
+  back. Health `transcribe_available: true`, transcription correct.
+- **Step 2** — `deploy/docker/Dockerfile.node`, root `.dockerignore`, the other four compose
+  services, `deploy/systemd/p80.service.in`, the four removed unit templates, rewritten
+  `service-install.sh` and `deploy.sh`, amended `deploy-parity`, a CI image-build job, and
+  the docs.
+
+**Verified:** 2741 tests / 58 files; nine packages typecheck; `scripts/smoke.sh` 96/96
+against the containerised stack, twice — once by hand and once after
+`bash scripts/service-install.sh`. The installer's stale-unit sweep removed all five old
+units. A full add → `INGEST_MEDIA` → `TRANSCRIBE` → `ready` chain ran across the worker and
+sidecar containers, which is the media-path-identity property ADR 0021 called the central
+risk. `p80-backup.service` produced a snapshot from a container; the timer is scheduled.
+
+`bash scripts/deploy.sh --dry-run` passes against a clean tree: the rewritten preflight
+clears docker, compose, the daemon, the installed unit, and the port check, and prints the
+new stage list.
+
+**Not verified:** a real `deploy.sh` run end to end, including the rollback path, and a
+reboot.
+
+### Two things found on the way, both out of scope and both worth fixing
+
+- **`scripts/smoke.sh:441` writes `P80_ASR_MODEL: medium` into the live database and never
+  restores it.** Every smoke run silently downgrades the model. This is the source of the
+  `medium` override found on 2026-08-22 — not a leftover experiment — and it reverted the
+  `large-v3-turbo` setting twice during this session. The setting has been restored again.
+  A smoke suite that permanently changes real configuration is the defect; round-tripping to
+  the value it read is the fix.
+- **Transcription is not reproducible run to run.** Two identical requests to the same
+  container, same model and options, gave 524 and 542 words. The entire difference was one
+  region at the end of the audio, where the second run hallucinated across several scripts
+  (`Edhoff 1983 -Ball ...`). It was correctly flagged — three `low_asr_confidence`
+  `low_logprob` warnings on segments 65–67 — so rule 12's machinery worked. This matters for
+  **next action 4**: WER differences smaller than the run-to-run variance cannot be measured
+  by transcribing once per model. `condition_on_previous_text` is the usual cause of a
+  hallucinating tail and is unplumbed (`asr.py:261-269`).
+
+### Known regression, recorded in ADR 0025
+
+`P80_MEDIA_ROOT` is live-tier (ADR 0019) but a bind mount is fixed at `compose up`, so
+pointing it at an unmounted directory cannot work until the unit restarts. It fails
+honestly — `validateMediaRoot` runs inside the container and the preflight endpoint returns
+`not_found` — but the capability is narrower than it was.
+
 ## Blocked on
 
 Nothing blocks the remaining Stage 2 phases.
@@ -307,9 +451,9 @@ Nothing blocks the remaining Stage 2 phases.
 
 ## Next actions
 
-0. **Deploy ADR 0024, then run all fifteen manual checks in one browser session.** Commit
-   and `bash scripts/deploy.sh`, which snapshots the database before migration 0003
-   touches it. Then ADR 0024's M1 — upload a German video from the laptop — which finally
+0. **Commit, then run all fifteen manual checks in one browser session.** Committing also
+   unblocks `bash scripts/deploy.sh --dry-run` and a real deploy, which are the two parts of
+   ADR 0025 a dirty tree prevented verifying. Then ADR 0024's M1 — upload a German video from the laptop — which finally
    supplies the file the other ten have been blocked on: Stage 2's M1–M5
    (`plan/stage-02-ingestion.md`), Stage 2b's M6 (`plan/stage-02b-settings.md`), and
    Stage 3's M1–M4 (`plan/stage-03-manual-items.md`). They also need one folder holding no

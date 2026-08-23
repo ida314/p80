@@ -1,0 +1,8 @@
+# The build context is this directory (see deploy/docker/Dockerfile.nlp). The venv is the
+# thing the image exists to replace, and shipping it to the daemon would also make the
+# host's architecture and extras leak into the build.
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+tests

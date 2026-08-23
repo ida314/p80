@@ -1,0 +1,16 @@
+# The build context is the repository root (deploy/docker/Dockerfile.node).
+#
+# `data/` is the running system's state — the database, its write-ahead log, the stored
+# transcripts, and the backups. It is not an input to a build and shipping it to the daemon
+# would be both slow and wrong.
+data/
+node_modules
+**/node_modules
+services/nlp/.venv
+apps/web/dist
+.git
+.env.local
+*.db
+*.db-shm
+*.db-wal
+.deploy.lock

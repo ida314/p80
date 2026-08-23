@@ -18,6 +18,12 @@ The first two sections are enough to add a video and read its transcript.
 | pnpm | ≥ 10 | Workspaces |
 | uv | any recent | Python toolchain for the NLP sidecar (ADR 0002) |
 | ffmpeg | ≥ 6 | Decoding audio for transcription, and reading a file's duration (ADR 0015). `ffprobe` ships with it. |
+| a container runtime | Compose v2+ | Only to *run* P80 in the background (ADR 0025). Not needed to develop it. |
+
+Everything above except the container runtime is for developing P80 — `pnpm dev` runs the
+processes on this machine. An installed P80 runs from images that carry their own Node,
+Python, speech-recognition dependencies, and `ffmpeg`, so a machine that only *uses* P80
+needs the runtime and an environment file.
 
 **`ffmpeg` was previously forbidden and is now required.** ADR 0015 replaced the embedded
 player with local media files, and decoding a file the user already holds is the whole of
@@ -209,37 +215,66 @@ paths relative to the root, so videos outside the new one stop playing until you
 back — their transcripts, corrections, and review history are untouched either way. Both
 surfaces count how many videos that affects and ask again before doing it.
 
-## Running P80 in the background (ADR 0021)
+## Running P80 in the background (ADR 0025)
 
 `pnpm dev` is for developing P80. To *use* it — to have it survive a reboot and be there
-when you open a browser — install it as systemd **user** services. Nothing runs as root.
+when you open a browser — install it as containers supervised by a systemd **user** unit.
+Nothing runs as root.
 
 ```bash
-bash scripts/service-install.sh              # install (or reinstall) and start
+bash scripts/service-install.sh              # build the images, install the unit, start
 bash scripts/service-install.sh --smoke      # ...and run the end-to-end check after
+bash scripts/service-install.sh --no-build   # reinstall the unit against existing images
 bash scripts/service-install.sh --uninstall  # stop, disable, and remove
 ```
 
-The installer refuses rather than installing something that cannot start: it checks that
-`.env.local` exists, that `P80_MEDIA_ROOT` names a real directory, that the toolchain is on
-the path, and that the sidecar environment exists when the sidecar runs here. Then it builds
-the browser client and writes the units from the templates in `deploy/systemd/`.
+You need a container runtime with Compose v2 or later, and nothing else: the images carry
+Node, Python, the sidecar's speech-recognition dependencies, and `ffmpeg`. The installer
+refuses rather than installing something that cannot start — it checks that `.env.local`
+exists, that `P80_MEDIA_ROOT` names a real absolute directory, and that the daemon is
+reachable.
 
-Three services and a timer:
+One unit, one timer, and four containers inside them:
 
-| Unit | What |
+| | What |
 |---|---|
-| `p80-migrate.service` | Applies migrations once, before the rest start |
-| `p80-api.service` | The API **and the built browser client**, on `P80_API_PORT` |
-| `p80-worker.service` | The job worker |
-| `p80-nlp.service` | The NLP sidecar — omitted when it runs on another machine |
+| `p80.service` | Runs the whole stack. Attached, so container output goes to the journal |
 | `p80-backup.timer` | A daily `VACUUM INTO` snapshot, with retention |
+| `migrate` | Applies migrations once and exits; the other two wait for it to succeed |
+| `api` | The API **and the built browser client**, on `P80_API_PORT` |
+| `worker` | The job worker |
+| `nlp` | The NLP sidecar |
 
 ```bash
-systemctl --user status p80.target       # all of it at once
-systemctl --user restart p80.target
-journalctl --user -u p80-api -f          # logs
+systemctl --user status p80.service      # all of it at once
+systemctl --user restart p80.service
+journalctl --user -u p80 -f              # every container's logs, in one place
 ```
+
+To drive compose directly — to read one container's logs, or to bring the stack up without
+the unit — point it at P80's environment file. Compose defaults to `.env`, which P80 does
+not use, and the media-root mount is written so that forgetting is an error rather than an
+empty bind mount:
+
+```bash
+export COMPOSE_ENV_FILES=.env.local
+docker compose ps
+docker compose logs -f worker
+```
+
+**The containers share the host's network namespace.** Each process still binds
+`127.0.0.1` itself, exactly as it does under `pnpm dev`, rather than binding `0.0.0.0`
+inside a private network and relying on a published port to make loopback true.
+
+**They also run as your own user.** That is what lets them read your media library and
+write the database. On a machine where you are not uid 1000, set `P80_UID` and `P80_GID` in
+`.env.local`; the installer says so if it applies to you.
+
+**The media library is mounted at the path it already has** — the same absolute path inside
+every container, because the worker resolves a media path and the sidecar opens it. One
+consequence is worth knowing in advance: changing `P80_MEDIA_ROOT` from the settings page
+takes effect for the running processes, but a directory that is not mounted is not there,
+and P80 will tell you so. Point it somewhere new in `.env.local` and restart the unit.
 
 **One difference from `pnpm dev`, and it changes the URL.** In development Vite serves the
 client on `P80_WEB_PORT` and proxies the API. Installed, there is no Vite: the API serves
@@ -251,12 +286,7 @@ the built client itself, so everything is one origin and nothing listens on the 
 | Installed | `P80_API_PORT` | `P80_API_PORT` |
 
 Both bind `127.0.0.1`. The two cannot run at once — they want the same API port — so stop
-the services before `pnpm dev`.
-
-The units name the absolute path of the `node` that was on your `PATH` at install time,
-because a service manager has no login shell to resolve one. If you change Node versions —
-particularly under a version manager, which moves the binary — rerun the installer.
-`--no-build` makes that quick.
+the unit before `pnpm dev`.
 
 User services stop at logout unless lingering is enabled. The installer says so if it is
 not; enabling it is the one step that needs root:
@@ -295,7 +325,7 @@ P80_TRUSTED_ORIGINS=https://<host>.<tailnet>.ts.net:5180
 ```
 
 ```bash
-systemctl --user restart p80.target
+systemctl --user restart p80.service
 ```
 
 **Why the second step is not optional.** Browsers attach an `Origin` header to any request
@@ -339,10 +369,17 @@ from. Anything you copy in yourself is listed and playable, and P80 will not rem
 bash scripts/deploy.sh
 ```
 
-Fetches, fast-forwards, installs dependencies, runs the typecheck and the suite, rebuilds
-the client, snapshots the database, restarts the target, and verifies the result with
-`scripts/smoke.sh`. If anything from the build onward fails, it puts the previous commit
-back, rebuilds, restarts, and checks that the old version came up.
+Fetches, fast-forwards, installs the dependencies the gates need, runs the typecheck and
+the suite, builds both images and tags them with the commit, snapshots the database, moves
+the `dev` tag the compose file resolves, restarts the unit, and verifies the result with
+`scripts/smoke.sh`.
+
+If the restart or the verification fails, it puts the previous commit back and points the
+`dev` tag at **the images built from it**, which still exist. That is the practical gain
+from ADR 0025: a rollback is a retag and a restart, rather than a rebuild that has to
+succeed while something is already going wrong. Only when there is no image for the previous
+commit — the first deploy after the migration, or after pruning — does it fall back to
+rebuilding.
 
 **It never restores the database, and says so.** The snapshot it takes before restarting is
 tagged, so retention keeps it indefinitely, and the script prints its path with the restore
@@ -357,12 +394,13 @@ bash scripts/deploy.sh --skip-tests  # hotfix path; nothing checks the build
 ```
 
 It refuses to start against a dirty working tree, a non-fast-forward, or a port already held
-by something that is not the `p80-api` unit — usually `pnpm dev`, which cannot run at the
-same time.
+by something that is not the `p80` unit — usually `pnpm dev`, which cannot run at the same
+time.
 
-By hand, the same thing is `pnpm build` followed by `systemctl --user restart p80.target`:
-the API serves the files that were on disk when it started. The script exists because that
-pair leaves out the snapshot, the gates, and the way back.
+By hand, the same thing is `docker compose build` followed by
+`systemctl --user restart p80.service`: the containers keep serving the image they started
+with. The script exists because that pair leaves out the snapshot, the gates, the commit
+tag that makes a rollback cheap, and the way back.
 
 Every push is separately checked by `.github/workflows/ci.yml`, which runs the same
 typecheck, suite, and build on a clean machine. The two are not redundant — a hosted runner

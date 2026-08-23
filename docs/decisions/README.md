@@ -43,12 +43,15 @@ Never delete an ADR. The value is in the record of what was considered.
 | [0018](0018-media-file-identity.md) | What identifies a media file | Content hash is identity, path is a repairable locator | Accepted |
 | [0019](0019-runtime-settings.md) | Which configuration is editable while the system runs | `settings` table seeded by the environment; live vs boot tiers; settings surface in both clients | Accepted |
 | [0020](0020-manual-item-creation.md) | How a hand-made learning item enters the system | `POST /api/items`; occurrences anchor to segment-derived sentences, which constrains Stage 4 | Accepted |
-| [0021](0021-running-as-a-service.md) | How P80 runs when somebody is using it | systemd user units over containers; the API serves the built client; migrations and backups get their own units | Accepted |
-| [0022](0022-continuous-integration-and-deployment.md) | How a change reaches the running system | Hosted CI checks every push; deploying is a local pull-based script that snapshots, verifies, and rolls back code but never the database | Accepted |
+| [0021](0021-running-as-a-service.md) | How P80 runs when somebody is using it | systemd user units over containers; the API serves the built client; migrations and backups get their own units | Superseded by 0025 |
+| [0022](0022-continuous-integration-and-deployment.md) | How a change reaches the running system | Hosted CI checks every push; deploying is a local pull-based script that snapshots, verifies, and rolls back code but never the database | Accepted; amended by 0025 |
 | [0023](0023-reverse-proxy-origins.md) | Reaching P80 from another device | `P80_TRUSTED_ORIGINS`, empty by default, boot-tier, wildcards refused; the proxy's access control is the whole security model | Accepted |
 | [0024](0024-uploading-media.md) | Putting a file into the library from the browser | Chunked resumable upload into one writable directory; rule 1 re-phrased as a mechanism; deletion bounded to what P80 wrote | Accepted |
+| [0025](0025-containerising-p80.md) | How P80 is deployed and supervised | Containers under one user unit; host networking keeps the loopback bind in the process; rollback is a retag | Accepted |
 
-**All 24 ADRs are accepted as of 2026-08-16.** Two questions inside ADR 0011 remain open by
+**All 25 ADRs are decided as of 2026-08-23. 0021 is superseded by 0025** — in part: 0025
+reverses its choice of user units over containers, and depends on the two sections of it
+that survive. Two questions inside ADR 0011 remain open by
 design and resolve by measurement at Stage 8; one inside ADR 0016 resolves at the close of
 Stage 2.
 

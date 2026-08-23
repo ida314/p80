@@ -1,0 +1,89 @@
+# The TypeScript half of P80 as one image (ADR 0025).
+#
+# Build context is the repository root:
+#
+#   docker build -f deploy/docker/Dockerfile.node -t p80-node:dev .
+#
+# One image, four commands. The migration one-shot, the API, the worker, and the backup job
+# are the same source tree with different entry points, exactly as they are four systemd
+# units today. Splitting them into four images would mean four copies of the same
+# `node_modules` and four things to keep in step.
+
+FROM node:22-slim AS build
+
+# `better-sqlite3` compiles a native binding when no prebuilt matches the platform. This is
+# also why the image cannot be built on one architecture and run on another, and why the
+# build host here is the deploy host.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV PNPM_HOME=/pnpm
+ENV PATH="${PNPM_HOME}:${PATH}"
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
+
+WORKDIR /app
+
+# Manifests before source, so editing a route does not re-resolve the dependency graph.
+# Listed one by one rather than globbed: a `COPY apps/*/package.json` flattens them all into
+# one destination, and pnpm needs each in its own workspace directory.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json                 apps/api/
+COPY apps/tui/package.json                 apps/tui/
+COPY apps/web/package.json                 apps/web/
+COPY apps/worker/package.json              apps/worker/
+COPY packages/core/package.json            packages/core/
+COPY packages/database/package.json        packages/database/
+COPY packages/language-adapters/package.json packages/language-adapters/
+COPY packages/providers/package.json       packages/providers/
+COPY packages/shared-ui/package.json       packages/shared-ui/
+
+# No `--ignore-scripts`. `pnpm-workspace.yaml` carries an explicit allowlist of the two
+# packages permitted to run build scripts, and `better-sqlite3` is one of them — skipping
+# them produces an install that resolves cleanly and then cannot open the database.
+RUN --mount=type=cache,target=/pnpm/store \
+    pnpm install --frozen-lockfile
+
+COPY . .
+
+# The only build output in the repository. The API serves it from its own port, so an image
+# without it would start, log that it has no client, and serve the API alone — which is a
+# valid state for a headless install and the wrong one here.
+RUN pnpm build
+
+
+FROM node:22-slim AS runtime
+
+# `ffprobe`, for reading a media file's duration during ingestion. The worker execs it
+# directly rather than through a shell, so a media path that passed containment still
+# cannot be read as a command. A missing ffprobe is not fatal — duration becomes null and a
+# warning is raised — which is exactly why it is worth installing rather than discovering.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# The whole tree, including development dependencies, because nothing here compiles: every
+# package sets `noEmit` and declares its `main` as a `.ts` file, and the services run from
+# source under the tsx loader. ADR 0021 §3 decided that and ADR 0025 §5 deliberately does
+# not revisit it in the same change. `pnpm-workspace.yaml` has to be among the files copied
+# — `findRepoRoot()` locates the repository by walking up for it, and both the storage paths
+# and the browser client's directory are resolved from what it finds.
+COPY --from=build /app /app
+
+ENV NODE_ENV=production
+
+# No user is created. Compose runs this image as the host user's own uid:gid so it can read
+# the media library and write the database; that uid has no passwd entry here, so `HOME`
+# would otherwise be unset.
+ENV HOME=/tmp
+
+# `node --import tsx <entry>`, never `pnpm --filter ... start`. Through pnpm the chain is
+# `pnpm -> sh -c -> tsx -> node`, the container's stop signal reaches pnpm, and the worker's
+# "finish the job I have claimed" handler never runs. Splitting it across ENTRYPOINT and
+# `command:` keeps every service's entry point a bare path and keeps all of them in exec
+# form, which is the part that actually decides who receives SIGTERM.
+ENTRYPOINT ["node", "--import", "tsx"]
+CMD ["apps/api/src/main.ts"]
