@@ -12,6 +12,7 @@ import {
 } from '../api.js';
 import { useResource } from '../hooks/useResource.js';
 import { useJob } from '../hooks/useJob.js';
+import { useLatestJob } from '../hooks/useLatestJob.js';
 import { useUpload } from '../hooks/useUpload.js';
 import { JobStatus } from '../components/JobStatus.js';
 
@@ -325,11 +326,18 @@ function UploadPanel({ onFinished }: { onFinished: () => void }) {
 }
 
 /**
- * What happens after the last byte lands.
+ * What happens after the last byte lands — both jobs, not just the first.
  *
- * The same `useJob` + `<JobStatus>` pair the add-by-path flow uses, because completion
- * returns the identical `202 { video, jobId }` shape — which is exactly why that response
- * was shared rather than given its own schema.
+ * Completion returns the identical `202 { video, jobId }` that `POST /api/videos` returns,
+ * which is why the response was shared rather than given its own schema. That `jobId` is
+ * `INGEST_MEDIA`: hash the file, probe its duration, and enqueue `TRANSCRIBE`. The second
+ * job is where the minutes and nearly all of the failure modes are, and its id cannot be in
+ * the `202` because the worker had not created it yet.
+ *
+ * Following only the first job is what made a failed transcription look like a stuck
+ * upload: ingest succeeded, `<JobStatus>` renders nothing for a success, and the panel went
+ * quiet while the actual work had already failed. So the ingest job is followed to its end,
+ * and on success we ask which transcribe job it produced and follow that one too.
  */
 function UploadDone({
   videoId,
@@ -340,13 +348,32 @@ function UploadDone({
   jobId: string;
   onReset: () => void;
 }) {
-  const progress = useJob(jobId);
+  const ingest = useJob(jobId);
+
+  // Only once ingest has actually succeeded. Asking earlier races the worker, and asking
+  // after a *failed* ingest would be looking for a job that was never enqueued.
+  const succeeded = ingest.job?.status === 'succeeded';
+  const transcribe = useLatestJob(succeeded ? videoId : null, 'TRANSCRIBE');
+  const transcribeProgress = useJob(transcribe.job?.id ?? null);
+
   return (
     <div className="upload__done">
       <p>
         Uploaded. <Link to={`/videos/${videoId}`}>Open the video</Link>
       </p>
-      <JobStatus progress={progress} label="Reading the file you uploaded" />
+      <JobStatus progress={ingest} label="Reading the file you uploaded" />
+
+      {/*
+        `transcribe.job === null` after a settled lookup is a legitimate end state, not a
+        pending one — the repair path passes `transcribe: false`, and a duplicate, a deleted
+        video, or missing media all end ingest without enqueueing anything. Rendering a
+        spinner for it would promise work that is never coming, which is the same class of
+        bug this component was changed to fix.
+      */}
+      {transcribe.job !== null && (
+        <JobStatus progress={transcribeProgress} label="Transcribing this video" />
+      )}
+
       <button type="button" onClick={onReset}>
         Upload another
       </button>

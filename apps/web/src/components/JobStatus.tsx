@@ -70,8 +70,12 @@ export function JobStatus({ progress, label }: Props) {
 
 /** `errorJson` is whatever the handler recorded. Rendered as text, and never assumed to
  *  have a shape — a job that failed in an unexpected way is exactly when a confident
- *  field access would throw and replace the message with a blank page. */
-function describeFailure(errorJson: unknown): string {
+ *  field access would throw and replace the message with a blank page.
+ *
+ *  Exported because the video page needs the same reading of `errorJson` but not the
+ *  surrounding copy: `<JobStatus>` speaks in the upload flow's terms ("the file you
+ *  uploaded"), which is wrong on a video that was added by path and never uploaded. */
+export function describeFailure(errorJson: unknown): string {
   if (errorJson !== null && typeof errorJson === 'object' && 'message' in errorJson) {
     const message = (errorJson as { message: unknown }).message;
     if (typeof message === 'string') return message;

@@ -268,6 +268,28 @@ export const deleteTranscript = (videoId: string) =>
 
 export const getJob = (id: string) => api<JobRecord>(`/api/jobs/${id}`);
 
+/**
+ * The jobs for one entity, newest first (`03-api.md` §8 — `status`, `type`, `entityId`).
+ *
+ * This is how a client finds a job it was never handed an id for. `INGEST_MEDIA` enqueues
+ * `TRANSCRIBE` from inside the worker, long after the `202 { video, jobId }` went out, so
+ * the transcribe job's id cannot appear in that response — it does not exist yet. Asking
+ * the list route for it is the only path that also works on a later visit, when the
+ * upload's in-memory state is long gone.
+ */
+export const listJobs = (query: {
+  entityId?: string;
+  jobType?: string;
+  status?: string;
+  limit?: number;
+}) => {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) params.set(key, String(value));
+  }
+  return api<JobRecord[]>(`/api/jobs?${params.toString()}`);
+};
+
 /* ------------------------------------------------------------ interests */
 
 export const listInterests = () => api<InterestPayload[]>('/api/interests');

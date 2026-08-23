@@ -3,6 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { formatTimecode } from '@p80/core/browser';
 import { correctSegment, getTranscript, getVideo, updateVideo } from '../api.js';
 import { useResource } from '../hooks/useResource.js';
+import { useLatestJob } from '../hooks/useLatestJob.js';
+import { describeFailure } from '../components/JobStatus.js';
 import {
   MediaPlayer,
   PLAYER_STATE,
@@ -67,6 +69,13 @@ export function VideoDetail() {
 
   const transcriptStatus = video.data?.transcriptStatus;
   const durationMs = video.data?.durationMs ?? null;
+
+  // Why the transcript failed, rather than a guess at it. `transcript_status` is a
+  // four-value column (`02-database.md`) and `failed` is all it can say — ASR being absent,
+  // ASR returning nothing, and a subtitle file that would not parse are one value between
+  // them. The job that failed still carries the reason, and unlike the upload panel's copy
+  // this is reachable on every later visit, which is when someone actually asks.
+  const failedJob = useLatestJob(transcriptStatus === 'failed' ? id : null, 'TRANSCRIBE');
 
   // A transcript still parsing resolves on its own. Polling here rather than asking the
   // user to refresh is the difference between "still working" and a page that looks broken.
@@ -181,10 +190,22 @@ export function VideoDetail() {
         )}
 
         {video.data.transcriptStatus === 'failed' && (
-          <p className="hint">
-            The transcript could not be parsed and nothing was stored.{' '}
-            <Link to={`/videos/${id}/transcript`}>Try another file</Link>.
-          </p>
+          <div role="alert" className="panel panel--error">
+            <strong>No transcript was produced for this video.</strong>
+            {failedJob.job?.status === 'failed' ? (
+              <p>{describeFailure(failedJob.job.errorJson)}</p>
+            ) : (
+              // No failed transcribe job to point at — the failure came from a subtitle
+              // file that would not parse, or the job rows have since been pruned. Say
+              // only what is certain rather than borrowing the other case's explanation.
+              <p>Nothing was stored.</p>
+            )}
+            <p className="hint">
+              The media file is untouched.{' '}
+              <Link to={`/videos/${id}/transcript`}>Upload a transcript instead</Link>, which
+              is faster and more accurate than transcribing.
+            </p>
+          </div>
         )}
 
         {video.data.transcriptStatus === 'ready' && (

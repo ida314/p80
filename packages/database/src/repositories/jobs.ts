@@ -129,7 +129,12 @@ export function listJobs(
   }
   const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
   const rows = handle.sqlite
-    .prepare(`SELECT * FROM jobs ${clause} ORDER BY created_at DESC LIMIT ?`)
+    // `id DESC` breaks the tie rather than leaving it to the query planner. `created_at`
+    // is milliseconds, and callers use `limit=1` on this route to mean "the current
+    // attempt" — with two rows in one millisecond that answer would otherwise be
+    // arbitrary. Ids are ULIDs, so they are monotonic within a millisecond and sort
+    // lexicographically: newest really is last.
+    .prepare(`SELECT * FROM jobs ${clause} ORDER BY created_at DESC, id DESC LIMIT ?`)
     .all(...params, filter.limit ?? 50) as JobRow[];
   return rows.map(toRecord);
 }
