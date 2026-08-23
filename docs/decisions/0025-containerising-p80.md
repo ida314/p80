@@ -125,6 +125,15 @@ something supersedes it on its own merits.
   rebuilding, and restarting — a sequence with several ways to fail while already failing.
   Images tagged with the commit make a rollback a start of the previous tag. The database
   still never rolls back automatically, and that is unchanged and deliberate.
+
+  **The tag to start is the one that was running, not the one that is checked out.** Those
+  are the same commit when a deploy is a pull that moves `HEAD`, and they are not under
+  `--no-pull` or `--ref` — where the checkout is already the build being deployed, so
+  restoring its own commit restores the failure. Rehearsing it found exactly that: the
+  rollback reported the images restored and left P80 down. What is running is read back from
+  the images themselves, since `:dev` and `:<commit>` name the same one, so there is no
+  second record of the deployed version to keep in step. `test/deploy-parity.test.ts` holds
+  the distinction.
 - **A volume snapshot is not a backup.** The database is in WAL mode and held open, which is
   why backups are taken with `VACUUM INTO` rather than by copying the file. Container
   tooling makes snapshotting a volume look like the obvious move; it would produce a torn

@@ -62,6 +62,10 @@ die()  { printf '\n\033[31merror\033[0m %s\n' "$*" >&2; exit 1; }
 # disk, per request.
 STAGE=preflight
 PREV_SHA=""
+# The commit the *running images* were built from, which is a different question from what
+# is checked out. They coincide when a deploy is a pull; under `--no-pull` they do not, and
+# rolling the images back to the checkout's own HEAD restores the broken build.
+DEPLOYED_SHA=""
 SNAPSHOT=""
 
 # --- rollback ----------------------------------------------------------------------
@@ -78,7 +82,14 @@ rollback() {
   [[ "$(git rev-parse HEAD)" == "${PREV_SHA}" ]] && [[ "${STAGE}" != build ]] \
     && [[ "${STAGE}" != restart ]] && [[ "${STAGE}" != verify ]] && return 0
 
-  say "Rolling back to ${PREV_SHA:0:12}"
+  # Two things are being put back and they are not always the same commit: the checkout
+  # returns to where this run found it, and the images return to what was serving. Naming
+  # only one of them is how the last rehearsal read as a success while P80 stayed down.
+  if [[ -n "${DEPLOYED_SHA}" ]] && [[ "${DEPLOYED_SHA}" != "${PREV_SHA:0:12}" ]]; then
+    say "Rolling back — checkout to ${PREV_SHA:0:12}, images to ${DEPLOYED_SHA}"
+  else
+    say "Rolling back to ${PREV_SHA:0:12}"
+  fi
   # Back onto the branch first when there was one. `--ref` detaches HEAD, and a rollback
   # that restores the right commit while leaving HEAD detached has put the repository in a
   # state the next deploy refuses to run from.
@@ -94,20 +105,35 @@ rollback() {
   # gates means nothing was deployed, so there is nothing to undo but the checkout.
   case "${STAGE}" in
     restart|verify)
-      if point_images_at "${PREV_SHA:0:12}"; then
-        ok "images restored to ${PREV_SHA:0:12}"
+      # The images go back to what was *running*, not to what was checked out. Those are the
+      # same commit when the deploy was a pull, and they are not under `--no-pull` — where
+      # the checkout is already the broken build, so restoring it would restore the failure
+      # and report success while P80 stayed down.
+      local restore="${DEPLOYED_SHA:-${PREV_SHA:0:12}}"
+      if [[ -n "${NEW_SHA:-}" ]] && [[ "${restore}" == "${NEW_SHA:0:12}" ]]; then
+        # Nothing to go back to: this deploy replaced a build of the same commit. Said
+        # plainly rather than performed as a no-op that looks like a recovery.
+        note "the previous images were built from this same commit — no earlier version to"
+        note "restore. The checkout is back; the running code is not."
+      elif point_images_at "${restore}"; then
+        ok "images restored to ${restore}"
       else
         # No image for that commit — this was the first deploy after the migration, or the
         # tags have been pruned. Rebuilding is slower and can itself fail, which is exactly
         # why it is the fallback and not the mechanism.
-        note "no image tagged ${PREV_SHA:0:12}; rebuilding from the restored checkout"
+        note "no image tagged ${restore}; rebuilding from the restored checkout"
         compose build >/dev/null 2>&1 || note "WARNING: rebuild failed during rollback."
-        tag_images "${PREV_SHA:0:12}" >/dev/null 2>&1 || true
-        point_images_at "${PREV_SHA:0:12}" >/dev/null 2>&1 || true
+        tag_images "${restore}" >/dev/null 2>&1 || true
+        point_images_at "${restore}" >/dev/null 2>&1 || true
       fi
       systemctl --user restart p80.service || note "WARNING: could not restart p80.service."
       if wait_for_health; then
         ok "previous version is back and healthy"
+        # The tree and the running code can now disagree, and silently disagreeing about
+        # which commit is serving is how the next deploy surprises someone.
+        if [[ "$(git rev-parse --short=12 HEAD)" != "${restore}" ]]; then
+          note "NOTE: the checkout is at $(git rev-parse --short=12 HEAD); ${restore} is what is running."
+        fi
       else
         note "WARNING: the previous version is not answering either. Check:"
         note "         journalctl --user -u p80 -n 50"
@@ -158,6 +184,19 @@ point_images_at() {
   for image in "${IMAGES[@]}"; do
     docker tag "${image}:${sha}" "${image}:dev" || return 1
   done
+}
+
+# What is running right now, read from the images rather than remembered.
+#
+# Every deploy tags the image it built with its commit and then moves `:dev` onto it, so
+# `:dev` carries both names and the second one is the answer. No new state to keep in sync,
+# and nothing to go stale if a deploy is interrupted between the two.
+#
+# Empty when the images were built by `service-install.sh`, which tags only `:dev`. That is
+# the first-deploy case, and the caller falls back to the checkout as before.
+deployed_sha() {
+  docker image inspect --format '{{join .RepoTags "\n"}}' "${IMAGES[0]}:dev" 2>/dev/null \
+    | sed -n "s|^${IMAGES[0]}:||p" | grep -vx dev | head -1
 }
 
 step() {
@@ -237,8 +276,16 @@ fi
 
 PREV_SHA="$(git rev-parse HEAD)"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+DEPLOYED_SHA="$(deployed_sha)"
 note "repo        ${REPO}"
 note "at          ${PREV_SHA:0:12} on ${BRANCH}"
+if [[ -n "${DEPLOYED_SHA}" ]] && [[ "${DEPLOYED_SHA}" != "${PREV_SHA:0:12}" ]]; then
+  # Worth saying out loud: it means the checkout has moved since the last deploy, or that
+  # this is a `--no-pull` run of a tree that is ahead of what is serving.
+  note "running     ${DEPLOYED_SHA}  (not the checkout)"
+elif [[ -z "${DEPLOYED_SHA}" ]]; then
+  note "running     unknown — the images carry no commit tag, so a rollback would rebuild"
+fi
 note "api         ${HEALTH}"
 note "database    ${DB_PATH}"
 

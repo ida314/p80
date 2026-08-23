@@ -88,3 +88,35 @@ describe('deploy does not prune the sidecar environment', () => {
     }
   });
 });
+
+/**
+ * A rollback puts back what was *running*, not what was checked out.
+ *
+ * Found by rehearsing it. `PREV_SHA` is HEAD at the start of the run, which is the
+ * previously deployed commit only when the deploy is a pull that moves HEAD. Under
+ * `--no-pull` the checkout is already the build being deployed, so restoring its own commit
+ * restored the failure — and reported `✓ images restored` while P80 stayed down. The image
+ * side now targets `DEPLOYED_SHA`, read from the tags `:dev` already carries.
+ */
+describe('rollback restores the running version', () => {
+  it('rolls the images back to what was deployed, not to the checkout', () => {
+    const script = commandLines('scripts/deploy.sh');
+    const rollback = script.slice(script.indexOf('rollback() {'));
+
+    // The whole fix in one line: the restore target falls back to the checkout only when
+    // the images carry no commit tag at all.
+    expect(rollback).toMatch(/restore="\$\{DEPLOYED_SHA:-\$\{PREV_SHA:0:12\}\}"/);
+    // And the git side still restores the checkout, which is a different question.
+    expect(rollback).toMatch(/git reset --hard "\$\{PREV_SHA\}"/);
+    expect(rollback).not.toMatch(/point_images_at "\$\{PREV_SHA:0:12\}"/);
+  });
+
+  it('reads the deployed commit from the images rather than remembering it', () => {
+    // No new state to keep in sync, and nothing to go stale if a deploy is interrupted
+    // between tagging the image and moving `:dev`.
+    const script = commandLines('scripts/deploy.sh');
+    expect(script).toMatch(/deployed_sha\(\) \{/);
+    expect(script).toMatch(/docker image inspect --format '\{\{join \.RepoTags/);
+    expect(script).toMatch(/DEPLOYED_SHA="\$\(deployed_sha\)"/);
+  });
+});
