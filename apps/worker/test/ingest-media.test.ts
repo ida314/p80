@@ -227,6 +227,10 @@ describe('the same file under two names', () => {
     expect(listVideos(fixture.handle, { profileId: profile.id }).videos).toHaveLength(1);
     expect(getVideo(fixture.handle, originalId)!.mediaPath).toBe('german/renamed.mp4');
     expect(getVideo(fixture.handle, second.id)).toBeNull();
+    // And the name the clients show follows it. `url` is the display fallback for a video
+    // with no title, so leaving it behind makes `/videos` name one file while `/library`
+    // names another — which is how somebody tidying up duplicates deletes the wrong one.
+    expect(getVideo(fixture.handle, originalId)!.url).toBe('german/renamed.mp4');
   });
 });
 

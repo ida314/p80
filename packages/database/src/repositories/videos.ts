@@ -468,6 +468,16 @@ export function setMediaIdentity(
  * Never cascades. The transcript, word array, items, and review history do not need the
  * bytes; only playback does (ADR 0018 §3). A video whose media is missing is still one you
  * can study from — it is one you cannot replay.
+ *
+ * **`url` follows a re-point, because it is what the clients display.** For `local_media`
+ * it holds the same relative path `media_path` does — set from one value at creation — and
+ * it is the fallback name on `/videos` and the transcript page for a video with no title.
+ * Left behind, it names a file the video no longer reads, and the library names the other
+ * one: two surfaces disagreeing about which file belongs to which video is how somebody
+ * tidying up duplicates deletes the wrong one.
+ *
+ * A *missing* file does not move it. `media_path = null` means the reference is gone, and
+ * the last known location is the most useful thing left to show.
  */
 export function setMediaLocation(
   handle: DatabaseHandle,
@@ -478,6 +488,10 @@ export function setMediaLocation(
   const params: unknown[] = [input.mediaMissing ? 1 : 0, now()];
   if (input.mediaPath !== undefined) {
     sets.unshift('media_path = ?');
+    params.unshift(input.mediaPath);
+  }
+  if (input.mediaPath) {
+    sets.unshift('url = ?');
     params.unshift(input.mediaPath);
   }
   handle.sqlite.prepare(`UPDATE videos SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);

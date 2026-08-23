@@ -459,6 +459,32 @@ CPU-speed folklore.
   second unmeasured claim in the same session would have been the same mistake. The comment
   in `asr.py` carries the number.
 
+### An eighth silent bug, found while setting up the manual sitting
+
+**`videos.url` did not follow a re-point, and it is what the clients display.** Uploading the
+same file twice produced the documented ADR 0018 §1 outcome — one video, re-pointed at the
+new copy, duplicate row dropped — but `setMediaLocation` writes `media_path` only. `url` is
+set from the same value at creation and is the fallback name on `/videos` and the transcript
+page for a video with no title, so the two diverged silently:
+
+```
+url         uploads/14-Min...-264.mp4      ← what /videos shows
+media_path  uploads/14-Min...-264-2.mp4    ← what actually plays
+```
+
+`/library` marks the file P80 really uses, so the two surfaces name **different files for the
+same video**. Nothing breaks and nothing is silent-but-wrong at the API level — the delete
+route still refuses a file in use — but a person tidying up two 23 MB copies is being told
+the wrong one is the spare. Found by reading the live database while preparing ADR 0024's
+M4, which is exactly the check it would have confused.
+
+`url` now follows a non-null re-point; a *missing* file leaves it alone, since the last known
+location is the most useful thing left to show. Regression test in
+`apps/worker/test/ingest-media.test.ts`.
+
+**The live row is still divergent** — the fix is forward-looking and there will be no second
+re-point of that video. One `UPDATE videos SET url = media_path` repairs it.
+
 ## Deploy and rollback, exercised (2026-08-23)
 
 Three real `deploy.sh` runs and three rollback rehearsals against the installed service.
