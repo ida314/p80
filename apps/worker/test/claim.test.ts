@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createLogger } from '@p80/core';
+import { ERROR_CODES, P80Error, createLogger } from '@p80/core';
 import {
   claimNextJob,
   enqueueJob,
@@ -9,9 +9,10 @@ import {
   migrate,
   openDatabase,
   reclaimStaleJobs,
+  retryJob,
   type DatabaseHandle,
 } from '@p80/database';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createWorker } from '../src/loop.js';
 import { JobRegistry, createNoopRegistry } from '../src/registry.js';
 
@@ -126,6 +127,10 @@ describe('job claim loop', () => {
 });
 
 describe('failure handling', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('retries while attempts remain, then fails with the error preserved', async () => {
     const handle = fresh();
     const registry = new JobRegistry().register('NOOP', async () => {
@@ -139,6 +144,15 @@ describe('failure handling', () => {
     expect(afterFirst.status).toBe('pending');
     expect(afterFirst.attemptCount).toBe(1);
 
+    // ADR 0027: it is pending but not yet claimable. Before the backoff existed, the very
+    // next tick re-ran it and both attempts were spent inside a millisecond — which is not
+    // a retry, it is the same failure twice.
+    expect(afterFirst.availableAt).toBeGreaterThan(Date.now());
+    expect(await worker.tick()).toBeNull();
+
+    vi.useFakeTimers();
+    vi.setSystemTime(afterFirst.availableAt!);
+
     await worker.tick();
     const afterSecond = getJob(handle, job.id)!;
     expect(afterSecond.status).toBe('failed');
@@ -146,9 +160,76 @@ describe('failure handling', () => {
     // §27.4: the failure is inspectable and no fallback result was fabricated.
     expect(afterSecond.errorJson).toMatchObject({ message: 'provider unreachable' });
     expect(afterSecond.outputJson).toBeNull();
+    // Nothing to wait for any more.
+    expect(afterSecond.availableAt).toBeNull();
 
     // Exhausted, so the loop leaves it alone.
     expect(await worker.tick()).toBeNull();
+  });
+
+  it('stops at the first attempt when the error says retrying is pointless', async () => {
+    /**
+     * The case this exists for: `ASR_UNAVAILABLE` is a 501 saying this build cannot reach
+     * that device. Waiting changes nothing about which libraries were compiled in, and the
+     * two extra attempts only bury the real message under two duplicates — which is what
+     * happened on 2026-08-22, three failures in 25 ms reported as though the file were bad.
+     */
+    const handle = fresh();
+    const registry = new JobRegistry().register('NOOP', async () => {
+      throw new P80Error(ERROR_CODES.ASR_UNAVAILABLE, 'this build has no CUDA', {
+        statusCode: 501,
+        retryable: false,
+      });
+    });
+    const worker = createWorker({ handle, registry, logger });
+    const job = enqueueJob(handle, 'NOOP', { maxAttempts: 3 });
+
+    await worker.tick();
+    const failed = getJob(handle, job.id)!;
+    expect(failed.status).toBe('failed');
+    expect(failed.attemptCount).toBe(1);
+    expect(failed.availableAt).toBeNull();
+    // The code and the flag survive into the row, so a client can tell a refusal from a
+    // fault without parsing prose.
+    expect(failed.errorJson).toMatchObject({
+      code: ERROR_CODES.ASR_UNAVAILABLE,
+      retryable: false,
+      willRetry: false,
+    });
+  });
+
+  it('retries an error that is not a P80Error, because an unknown is not a refusal', async () => {
+    // `P80Error.retryable` defaults to false, so reading the flag off every error would
+    // quietly make one attempt the rule for ordinary bugs. Only a P80Error gets to say no.
+    const handle = fresh();
+    const registry = new JobRegistry().register('NOOP', async () => {
+      throw new TypeError('undefined is not a function');
+    });
+    const worker = createWorker({ handle, registry, logger });
+    const job = enqueueJob(handle, 'NOOP', { maxAttempts: 3 });
+
+    await worker.tick();
+    expect(getJob(handle, job.id)!.status).toBe('pending');
+  });
+
+  it('lets a manual retry skip the backoff, because the user is asking for it now', async () => {
+    const handle = fresh();
+    const registry = new JobRegistry().register('NOOP', async () => {
+      throw new Error('provider unreachable');
+    });
+    const worker = createWorker({ handle, registry, logger });
+    const job = enqueueJob(handle, 'NOOP', { maxAttempts: 1 });
+
+    await worker.tick();
+    expect(getJob(handle, job.id)!.status).toBe('failed');
+
+    const retried = retryJob(handle, job.id);
+    expect(retried.status).toBe('pending');
+    expect(retried.attemptCount).toBe(0);
+    expect(retried.availableAt).toBeNull();
+    // Claimable immediately — a button that looked broken for half a minute would be read
+    // as a button that does nothing.
+    expect(await worker.tick()).toBe(job.id);
   });
 
   it('fails a claimed job with no registered handler instead of leaving it running', async () => {

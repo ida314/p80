@@ -1,10 +1,15 @@
 import type { JobProgress } from '../hooks/useJob.js';
+import { RetryJob, failureIsRetryable } from './RetryJob.js';
 
 interface Props {
   progress: JobProgress;
   /** What the job is doing, in the user's terms — "Reading your transcript", not
    *  "PARSE_TRANSCRIPT". */
   label: string;
+  /** Called once a failed job has been queued again. Omitting it hides the retry: a caller
+   *  that cannot follow the new job should not offer to start one, or the page goes quiet
+   *  at exactly the moment something is happening. */
+  onRetried?: () => void;
 }
 
 /**
@@ -17,7 +22,7 @@ interface Props {
  * envelope, shown rather than swallowed, because every job is inspectable
  * (`03-api.md` §8).
  */
-export function JobStatus({ progress, label }: Props) {
+export function JobStatus({ progress, label, onRetried }: Props) {
   const { job, stalled, error } = progress;
 
   if (error !== null) {
@@ -48,6 +53,14 @@ export function JobStatus({ progress, label }: Props) {
       <div role="alert" className="panel panel--error">
         <strong>{label} failed.</strong>
         <p>{describeFailure(job.errorJson)}</p>
+        {onRetried !== undefined && (
+          <RetryJob
+            jobId={job.id}
+            label="Try again"
+            retryable={failureIsRetryable(job.errorJson)}
+            onRetried={onRetried}
+          />
+        )}
         <p className="hint">
           The file you uploaded is still stored. Nothing was written to the transcript.
         </p>

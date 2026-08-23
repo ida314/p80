@@ -21,10 +21,15 @@ import { listJobs } from '../api.js';
  * Single-shot per key, deliberately. Following the job's *progress* is `useJob`'s
  * responsibility; this only answers "which job", and re-polling that would be asking a
  * settled question over and over.
+ *
+ * `nonce` is how a caller says the question has changed. A manual retry resets the job's
+ * attempts and status, so the answer this hook settled on is stale in a way it cannot see
+ * for itself — bumping the nonce asks again without turning it into a poll.
  */
 export function useLatestJob(
   entityId: string | null,
   jobType: string,
+  nonce = 0,
 ): { job: JobRecord | null; settled: boolean } {
   const [job, setJob] = useState<JobRecord | null>(null);
   const [settled, setSettled] = useState(false);
@@ -50,7 +55,7 @@ export function useLatestJob(
     return () => {
       cancelled = true;
     };
-  }, [entityId, jobType]);
+  }, [entityId, jobType, nonce]);
 
   return { job, settled };
 }

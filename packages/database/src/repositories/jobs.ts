@@ -4,6 +4,7 @@ import {
   TERMINAL_JOB_STATES,
   newId,
   now,
+  retryAvailableAt,
   type JobRecord,
   type JobState,
   type JobType,
@@ -37,6 +38,7 @@ interface JobRow {
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
+  available_at: number | null;
 }
 
 function toRecord(row: JobRow): JobRecord {
@@ -57,6 +59,7 @@ function toRecord(row: JobRow): JobRecord {
     createdAt: row.created_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,
+    availableAt: row.available_at,
   };
 }
 
@@ -169,13 +172,16 @@ export function claimNextJob(
           SELECT id FROM jobs
            WHERE status = 'pending'
              AND attempt_count < max_attempts
+             -- A retry serving its backoff is not claimable yet (ADR 0027). Null is the
+             -- ordinary case and means now, so nothing enqueued has to set it.
+             AND (available_at IS NULL OR available_at <= ?)
              ${typeFilter}
            ORDER BY priority DESC, created_at ASC
            LIMIT 1
         )
       RETURNING *`,
     )
-    .get(workerId, ts, ts, ...(eligibleTypes ?? [])) as JobRow | undefined;
+    .get(workerId, ts, ts, ts, ...(eligibleTypes ?? [])) as JobRow | undefined;
 
   return row ? toRecord(row) : null;
 }
@@ -195,31 +201,58 @@ export function completeJob(
 }
 
 /**
- * Records a failure. A job with attempts remaining returns to `pending` so the loop
- * retries it; one that has exhausted them stays `failed`, inspectable, with its error
- * preserved (§27.3, §27.4). Completed stages are never rolled back and no fallback
- * result is fabricated.
+ * Records a failure (ADR 0027).
+ *
+ * Three questions, answered separately because they used to be answered as one:
+ *
+ * - **Is it worth retrying?** A `P80Error` says so itself, and the answer is believed. A
+ *   501 `ASR_UNAVAILABLE` is a setup problem; waiting changes nothing about which libraries
+ *   were compiled in, and running it twice more only buries the real message under two
+ *   duplicates. Anything that is *not* a `P80Error` is an unknown, and an unknown is
+ *   retried — `retryable` defaults to `false`, so reading the field off every error would
+ *   silently make one attempt the rule for ordinary bugs.
+ * - **Are there attempts left?** Unchanged: `attempt_count` against `max_attempts`.
+ * - **When may it run again?** Not immediately. See `retryAvailableAt`.
+ *
+ * Completed stages are never rolled back and no fallback result is fabricated (§27.3,
+ * §27.4). The stored error keeps its `code`, `retryable`, and `details` as well as its
+ * message, because a client that can only read prose cannot tell a refusal from a fault.
  */
 export function failJob(handle: DatabaseHandle, id: string, error: unknown): JobState {
   const job = getJob(handle, id);
   if (!job) throw P80Error.notFound('Job', { id });
 
+  const retryable = error instanceof P80Error ? error.retryable : true;
   const exhausted = job.attemptCount >= job.maxAttempts;
-  const status: JobState = exhausted ? 'failed' : 'pending';
+  const status: JobState = retryable && !exhausted ? 'pending' : 'failed';
+  const ts = now();
+
   const payload = {
     message: error instanceof Error ? error.message : String(error),
     name: error instanceof Error ? error.name : 'Error',
     attempt: job.attemptCount,
+    ...(error instanceof P80Error
+      ? { code: error.code, retryable: error.retryable, details: error.details }
+      : {}),
+    // Recorded even when it is null, so "this one is not coming back" is a fact in the row
+    // rather than something inferred from the absence of a field.
+    ...(status === 'pending' ? {} : { willRetry: false as const }),
   };
 
   handle.sqlite
     .prepare(
       `UPDATE jobs
           SET status = ?, error_json = ?, claimed_by = NULL, claimed_at = NULL,
-              completed_at = ?
+              completed_at = ?, available_at = ?
         WHERE id = ?`,
     )
-    .run(status, JSON.stringify(payload), exhausted ? now() : null, id);
+    .run(
+      status,
+      JSON.stringify(payload),
+      status === 'pending' ? null : ts,
+      status === 'pending' ? retryAvailableAt(job.attemptCount, ts) : null,
+      id,
+    );
 
   return status;
 }
@@ -257,10 +290,12 @@ export function retryJob(handle: DatabaseHandle, id: string): JobRecord {
   }
   handle.sqlite
     .prepare(
+      // `available_at` is cleared too: the user is asking for it *now*, and leaving a
+      // backoff in place would make the button look broken for half a minute.
       `UPDATE jobs
           SET status = 'pending', attempt_count = 0, error_json = NULL,
               claimed_by = NULL, claimed_at = NULL, started_at = NULL,
-              completed_at = NULL
+              completed_at = NULL, available_at = NULL
         WHERE id = ?`,
     )
     .run(id);

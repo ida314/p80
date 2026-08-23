@@ -146,10 +146,17 @@ uv sync --project services/nlp --extra asr
 uv sync --project services/nlp --extra asr --extra align
 ```
 
-**A GPU is strongly recommended and its absence is loud by default.** Transcription on CPU
-is roughly twenty times slower and otherwise identical, which produces a job that looks
-like it is working for forty minutes. `P80_ASR_REQUIRE_GPU=true` (the default) makes that a
-refusal naming the reason; set it to `0` to run on CPU deliberately.
+**A missing GPU is loud by default, and that is about the device rather than the speed.**
+`P80_ASR_REQUIRE_GPU=true` refuses instead of quietly moving the job to a device you did
+not ask for; set it to `0` to run on CPU deliberately.
+
+How much slower CPU is depends almost entirely on the model, so no single multiple is worth
+quoting. A turbo model on a many-core CPU can run several times faster than real time; a
+full large model on the same machine can take longer than the audio. **Measure yours before
+assuming you need a GPU** — one 7-minute file, `int8`, twenty cores, `large-v3-turbo`:
+134 seconds including the model download, or 0.3x real time. If your first transcription
+finishes in less time than the video, the refusal is protecting you from nothing and turning
+it off is the right call.
 
 ## The media library (ADR 0015)
 

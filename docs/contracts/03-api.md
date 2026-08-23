@@ -528,6 +528,17 @@ GET    /api/diagnostics/provider-calls # ADDED: prompt/output inspection (§10.7
 GET    /api/health                     # ADDED: Stage 1 exit criterion
 ```
 
+<!-- ADDED (ADR 0027): what a failed job means and when it comes back. -->
+A **failed** job is not necessarily out of attempts. `retryable: false` on the error ends it
+at the current attempt, because waiting cannot change a refusal — so `attemptCount` on a
+failed job is evidence about the kind of failure, not always `maxAttempts`. `errorJson`
+carries the `code` and the flag alongside the message; a client that renders only the message
+cannot tell a setup problem from a fault.
+
+A failed-but-retryable job returns to `pending` with `availableAt` in the future and is
+claimed again when it passes. `POST /api/jobs/:id/retry` resets the attempts **and** clears
+that wait: the user asking for it now is a different request from the scheduler's own.
+
 ## 9. Data portability
 
 ```

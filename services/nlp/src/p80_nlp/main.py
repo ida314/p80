@@ -79,6 +79,7 @@ class TranscribeOptions(BaseModel):
     require_gpu: bool | None = None
     align: bool | None = None
     language_min_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+    condition_on_previous_text: bool | None = None
 
 
 class TranscribeRequest(BaseModel):

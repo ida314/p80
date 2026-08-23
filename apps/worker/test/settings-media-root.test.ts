@@ -182,6 +182,7 @@ describe('TRANSCRIBE', () => {
       requireGpu: false,
       align: true,
       languageMinProbability: 0.5,
+      conditionOnPreviousText: false,
     });
     // And the path came from the stored root, or the media would not have been found.
     expect(seen[0]?.mediaPath.startsWith(fixture.otherRoot)).toBe(true);

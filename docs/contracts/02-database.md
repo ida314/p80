@@ -314,10 +314,23 @@ touch disk.
 ### `jobs`
 `id`, `job_type`, `entity_type`, `entity_id`, `status`, `attempt_count`, `max_attempts`,
 `priority`, `input_json`, `output_json`, `error_json`, `claimed_by`, `claimed_at`,
-`created_at`, `started_at`, `completed_at`
+`created_at`, `started_at`, `completed_at`, `available_at`
 
 `claimed_by` / `claimed_at` support the single-worker claim loop and let a crashed
 worker's jobs be reclaimed after a timeout.
+
+<!-- ADDED (ADR 0027): retry backoff. -->
+`available_at` is the earliest a pending job may be claimed, and **null means now** — so
+nothing that enqueues a job has to set it. A failed-but-retryable job gets one, which is
+what keeps a retry from re-running in the same millisecond. The wait lives in the row rather
+than in the worker because it belongs to the job that failed: sleeping the process would
+stall every unrelated job for the same interval, and would not survive a restart. The claim
+index leads with `status` and `available_at` for the same reason the claim query filters on
+both.
+
+`error_json` carries `code`, `retryable`, and `details` when the failure was a `P80Error`,
+not only its message. A client that can read prose alone cannot tell a refusal from a fault,
+and the difference decides whether the user fixes their setup or reports a bug.
 
 ### `settings`
 `key`, `value_json`, `updated_at`

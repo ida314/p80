@@ -57,11 +57,19 @@ export const configSchema = z.object({
   P80_ASR_MODEL: z.string().min(1).default('large-v3'),
   P80_ASR_DEVICE: z.string().min(1).default('cuda'),
   P80_ASR_COMPUTE_TYPE: z.string().min(1).default('float16'),
-  /** Default true: a missing GPU is a refusal naming the reason, not a job that runs
-   *  twenty times slower while looking healthy. */
+  /** Default true: a missing GPU is a refusal naming the reason, not a silent downgrade
+   *  to a device the caller did not ask for. How much slower CPU actually is depends
+   *  entirely on the model — see ADR 0016 for the measurement and why the default stands
+   *  anyway. */
   P80_ASR_REQUIRE_GPU: booleanish.default('true'),
   P80_ASR_ALIGN: booleanish.default('true'),
   P80_ASR_LANG_MIN_PROB: z.coerce.number().min(0).max(1).default(0.5),
+  /** Default **false**, unlike the backend's own. Feeding each window the previous
+   *  window's text lets a hallucination become the next window's prompt, which is the
+   *  usual cause of an invented tail — two identical runs of one file differed by 18
+   *  words, all of it in one region at the end. A transcript that varies run to run cannot
+   *  be compared against another model's or kept as a fixture. */
+  P80_ASR_CONDITION_ON_PREVIOUS_TEXT: booleanish.default('false'),
 
   /**
    * Extra browser origins the API will accept, comma-separated. Empty by default (ADR 0023).

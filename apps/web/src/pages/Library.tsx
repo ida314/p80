@@ -348,20 +348,29 @@ function UploadDone({
   jobId: string;
   onReset: () => void;
 }) {
-  const ingest = useJob(jobId);
+  // Bumped when a failed job is queued again, so both hooks re-ask: polling stops at a
+  // terminal state and the lookup settles once, which is correct until a retry undoes both.
+  const [retryNonce, setRetryNonce] = useState(0);
+  const onRetried = useCallback(() => setRetryNonce((n) => n + 1), []);
+
+  const ingest = useJob(jobId, retryNonce);
 
   // Only once ingest has actually succeeded. Asking earlier races the worker, and asking
   // after a *failed* ingest would be looking for a job that was never enqueued.
   const succeeded = ingest.job?.status === 'succeeded';
-  const transcribe = useLatestJob(succeeded ? videoId : null, 'TRANSCRIBE');
-  const transcribeProgress = useJob(transcribe.job?.id ?? null);
+  const transcribe = useLatestJob(succeeded ? videoId : null, 'TRANSCRIBE', retryNonce);
+  const transcribeProgress = useJob(transcribe.job?.id ?? null, retryNonce);
 
   return (
     <div className="upload__done">
       <p>
         Uploaded. <Link to={`/videos/${videoId}`}>Open the video</Link>
       </p>
-      <JobStatus progress={ingest} label="Reading the file you uploaded" />
+      <JobStatus
+        progress={ingest}
+        label="Reading the file you uploaded"
+        onRetried={onRetried}
+      />
 
       {/*
         `transcribe.job === null` after a settled lookup is a legitimate end state, not a
@@ -371,7 +380,11 @@ function UploadDone({
         bug this component was changed to fix.
       */}
       {transcribe.job !== null && (
-        <JobStatus progress={transcribeProgress} label="Transcribing this video" />
+        <JobStatus
+          progress={transcribeProgress}
+          label="Transcribing this video"
+          onRetried={onRetried}
+        />
       )}
 
       <button type="button" onClick={onReset}>

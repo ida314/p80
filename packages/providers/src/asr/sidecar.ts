@@ -170,6 +170,7 @@ function toWireOptions(options: AsrOptions): Record<string, unknown> {
     require_gpu: options.requireGpu,
     align: options.align,
     language_min_probability: options.languageMinProbability,
+    condition_on_previous_text: options.conditionOnPreviousText,
   };
 }
 

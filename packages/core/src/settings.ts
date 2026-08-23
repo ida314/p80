@@ -35,6 +35,7 @@ export const EDITABLE_SETTING_KEYS = [
   'P80_ASR_REQUIRE_GPU',
   'P80_ASR_ALIGN',
   'P80_ASR_LANG_MIN_PROB',
+  'P80_ASR_CONDITION_ON_PREVIOUS_TEXT',
 ] as const;
 
 export type EditableSettingKey = (typeof EDITABLE_SETTING_KEYS)[number];
@@ -102,6 +103,7 @@ export const ASR_DEFAULTS = {
   P80_ASR_REQUIRE_GPU: true,
   P80_ASR_ALIGN: true,
   P80_ASR_LANG_MIN_PROB: 0.5,
+  P80_ASR_CONDITION_ON_PREVIOUS_TEXT: false,
 } as const;
 
 export const SETTING_DEFINITIONS: Record<EditableSettingKey, SettingDefinition> = {
@@ -141,7 +143,7 @@ export const SETTING_DEFINITIONS: Record<EditableSettingKey, SettingDefinition> 
     key: 'P80_ASR_REQUIRE_GPU',
     schema: z.boolean(),
     description:
-      'Refuse to transcribe when a GPU was asked for and is not available. On by default, because CPU transcription is roughly twenty times slower and otherwise identical — which produces a job that looks healthy for forty minutes. Turn it off to accept a slow run deliberately.',
+      'Refuse to transcribe when a GPU was asked for and is not available. On by default, because falling back silently gives you a device you did not ask for and no way to tell. How much slower CPU is depends on the model: a turbo model can run several times faster than real time on a many-core CPU, while a full large model on the same machine can take longer than the audio. Turn this off to accept whatever CPU gives you here.',
     control: 'boolean',
   },
   P80_ASR_ALIGN: {
@@ -157,6 +159,13 @@ export const SETTING_DEFINITIONS: Record<EditableSettingKey, SettingDefinition> 
     description:
       'How confident the model must be that the audio is in another language before the mismatch fails the job rather than warning. An uncertain disagreement is not evidence of anything; a confident one is.',
     control: 'number',
+  },
+  P80_ASR_CONDITION_ON_PREVIOUS_TEXT: {
+    key: 'P80_ASR_CONDITION_ON_PREVIOUS_TEXT',
+    schema: z.boolean(),
+    description:
+      'Give each window of audio the previous window’s text as context. Off by default: it helps continuous speech with consistent terminology, but it also lets an invented phrase become the next window’s prompt, which is how a transcript grows a hallucinated tail and stops being reproducible run to run.',
+    control: 'boolean',
   },
 };
 
@@ -191,6 +200,7 @@ export interface AsrOptions {
   requireGpu: boolean;
   align: boolean;
   languageMinProbability: number;
+  conditionOnPreviousText: boolean;
 }
 
 /**
@@ -224,6 +234,7 @@ export function resolveRuntimeSettings(
       requireGpu: value('P80_ASR_REQUIRE_GPU') as boolean,
       align: value('P80_ASR_ALIGN') as boolean,
       languageMinProbability: value('P80_ASR_LANG_MIN_PROB') as number,
+      conditionOnPreviousText: value('P80_ASR_CONDITION_ON_PREVIOUS_TEXT') as boolean,
     },
   };
 }

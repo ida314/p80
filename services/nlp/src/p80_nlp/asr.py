@@ -15,10 +15,11 @@ being wrong (ADR 0016 §3):
 
 * **No model installed** -> 501. Never an empty transcript, which is indistinguishable
   from "this video has no speech".
-* **GPU configured and unavailable** -> 503. ASR on CPU is roughly twenty times slower and
-  otherwise identical, which produces a job that looks like it is working for forty
-  minutes. This is the same failure the sibling project documents: a CPU-only wheel
-  installs cleanly and then silently runs on CPU.
+* **GPU configured and unavailable** -> 503. Falling back would hand the caller a device
+  it did not ask for, at a speed nothing here can predict — a job that is fine on one
+  model and unusable on another, with nothing in the output saying which happened. This is
+  the same failure the sibling project documents: a CPU-only wheel installs cleanly and
+  then silently runs on CPU.
 * **Detected language disagrees with the requested one** -> 409. A German profile fed an
   English video would otherwise get a plausible transcript and a curriculum of the wrong
   language.
@@ -102,6 +103,15 @@ class Settings:
     # is an error. Whisper reports a probability, and a confident disagreement is a
     # different event from an uncertain one.
     language_min_probability: float
+    # Feed each window the previous window's text as a prompt. The backend defaults this
+    # **on**, and it is the usual cause of a hallucinated tail: once the decoder starts
+    # inventing, its own invention becomes the next window's context and it keeps going.
+    # Two identical runs of the same 7-minute file differed by 18 words, the whole
+    # difference being one region at the end where the second run produced text from
+    # several scripts. Off by default here, because a transcript that varies run to run
+    # cannot be compared against another model's (ADR 0016's open question) and cannot be
+    # a fixture.
+    condition_on_previous_text: bool
 
     @staticmethod
     def from_env(env: dict[str, str] | None = None) -> Settings:
@@ -123,6 +133,11 @@ class Settings:
             align=_flag(e, "P80_ASR_ALIGN", DEFAULTS["align"]),
             language_min_probability=float(
                 e.get("P80_ASR_LANG_MIN_PROB", DEFAULTS["language_min_probability"])
+            ),
+            condition_on_previous_text=_flag(
+                e,
+                "P80_ASR_CONDITION_ON_PREVIOUS_TEXT",
+                DEFAULTS["condition_on_previous_text"],
             ),
         )
 
@@ -152,6 +167,9 @@ class Settings:
             language_min_probability=float(
                 pick("language_min_probability", self.language_min_probability)  # type: ignore[arg-type]
             ),
+            condition_on_previous_text=bool(
+                pick("condition_on_previous_text", self.condition_on_previous_text)
+            ),
         )
 
 
@@ -164,6 +182,7 @@ DEFAULTS: dict[str, object] = {
     "require_gpu": True,
     "align": True,
     "language_min_probability": 0.5,
+    "condition_on_previous_text": False,
 }
 
 
@@ -192,9 +211,12 @@ def assert_device(settings: Settings) -> None:
 
     The failure this prevents is specific and has bitten this stack's ancestor: CTranslate2
     ships no aarch64 CUDA wheels, so ``pip install`` succeeds and inference then runs on
-    CPU at roughly a twentieth of the speed. On a job that was going to take three minutes
-    that produces something which looks like it is working for an hour. This check is the
+    CPU. The cost of that is not a fixed multiple — it depends on the model, and the
+    honest answer is that the caller cannot know which they got. This check is the
     difference between finding out in a second and finding out after the job.
+
+    Note this is a check about the *device*, not about speed. It is worth keeping even
+    where CPU turns out to be fast, because a silent substitution is the problem.
     """
     if not settings.require_gpu or not settings.device.startswith("cuda"):
         return
@@ -207,11 +229,45 @@ def assert_device(settings: Settings) -> None:
         ) from exc
     if not torch.cuda.is_available():
         raise AsrUnavailable(
-            "CUDA was requested and is unavailable. Transcription on CPU is roughly "
-            "twenty times slower, so P80 refuses rather than running a job that looks "
-            "healthy for an hour. Set P80_ASR_REQUIRE_GPU=0 to run on CPU deliberately.",
+            "CUDA was requested and is unavailable. P80 refuses rather than quietly "
+            "moving the job to a device you did not ask for, at a speed that depends "
+            "entirely on the model. Set P80_ASR_REQUIRE_GPU=0 to run on CPU deliberately.",
             retryable=True,
         )
+
+
+# One model, held between requests, keyed by everything that decides which model it *is*.
+#
+# `WhisperModel(...)` used to be constructed inside `transcribe()`, so every request paid a
+# full load — gigabytes read and a container initialised — before any audio was decoded. On
+# the first measured run that cost was inside the 134 s that transcribed 7 minutes of audio,
+# and it was being paid again on every job after it.
+#
+# Keyed on the triple because all three are per-request overridable (ADR 0019 §5): a cache
+# keyed on the model name alone would hand back a CPU model to a request that asked for
+# `cuda`, which is the silent-downgrade failure this module exists to make loud.
+#
+# Size one, deliberately. Holding two large models is worse than reloading one: the settings
+# surface changes these rarely, and the machine's memory is the scarce resource.
+_MODEL_CACHE: dict[str, object] = {}
+_MODEL_KEY: str | None = None
+
+
+def _load_model(model_id: str, device: str, compute_type: str) -> object:
+    """The cached model for these settings, loading it if the settings have changed."""
+    from faster_whisper import WhisperModel  # noqa: PLC0415
+
+    global _MODEL_KEY
+    key = f"{model_id}\x00{device}\x00{compute_type}"
+    if _MODEL_KEY != key or key not in _MODEL_CACHE:
+        # Dropped before the new one is built, not after. Two of these do not fit on a
+        # machine where one is already the largest thing running.
+        _MODEL_CACHE.clear()
+        _MODEL_CACHE[key] = WhisperModel(
+            model_id, device=device, compute_type=compute_type
+        )
+        _MODEL_KEY = key
+    return _MODEL_CACHE[key]
 
 
 def transcribe(media_path: str, language: str, settings: Settings | None = None) -> Result:
@@ -237,9 +293,7 @@ def transcribe(media_path: str, language: str, settings: Settings | None = None)
         ) from exc
 
     try:
-        model = WhisperModel(
-            cfg.model_id, device=cfg.device, compute_type=cfg.compute_type
-        )
+        model = _load_model(cfg.model_id, cfg.device, cfg.compute_type)
     except Exception as exc:  # noqa: BLE001 — the backend's exception type is not ours
         # Installed is not the same as usable. The most common way this fails is a build
         # of the inference backend with no CUDA support being asked for `device=cuda`:
@@ -266,6 +320,11 @@ def transcribe(media_path: str, language: str, settings: Settings | None = None)
         # VAD keeps silence out of the decoder, which removes most hallucinations at
         # source rather than filtering them afterwards.
         vad_filter=True,
+        # Off by default, unlike the backend. See `Settings.condition_on_previous_text`:
+        # the decoder's own hallucination becomes the next window's prompt, and the result
+        # is a transcript that differs run to run. Still a setting, because conditioning
+        # genuinely helps continuous speech with consistent terminology.
+        condition_on_previous_text=cfg.condition_on_previous_text,
     )
 
     result = Result(

@@ -19,7 +19,7 @@ describe('the settings page', () => {
     /**
      * A `<label>` forwards clicks to its control. With the help marker inside one, clicking
      * `?` on `P80_ASR_REQUIRE_GPU` would flip the setting — the user reads the tooltip and
-     * silently disarms the GPU refusal, then finds out forty minutes into a CPU
+     * silently disarms the GPU refusal, then finds out partway into a CPU
      * transcription.
      *
      * The page uses `<div className="field">` with an explicit `htmlFor`. Collapsing that

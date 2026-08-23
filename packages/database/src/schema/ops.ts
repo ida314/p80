@@ -22,7 +22,8 @@ export const recommendationFeedback = sqliteTable('recommendation_feedback', {
 });
 
 /** `claimedBy` / `claimedAt` support the single-worker claim loop and let a crashed
- *  worker's jobs be reclaimed after a timeout. */
+ *  worker's jobs be reclaimed after a timeout. `availableAt` holds a failed job out of the
+ *  pool for its backoff (ADR 0027); null is claimable now. */
 export const jobs = sqliteTable('jobs', {
   id: text('id').primaryKey(),
   jobType: text('job_type').notNull(),
@@ -40,6 +41,7 @@ export const jobs = sqliteTable('jobs', {
   createdAt: integer('created_at').notNull(),
   startedAt: integer('started_at'),
   completedAt: integer('completed_at'),
+  availableAt: integer('available_at'),
 });
 
 /**

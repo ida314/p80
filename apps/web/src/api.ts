@@ -290,6 +290,19 @@ export const listJobs = (query: {
   return api<JobRecord[]>(`/api/jobs?${params.toString()}`);
 };
 
+/**
+ * Run a finished job again from the start.
+ *
+ * The route has existed since Stage 1 and no client called it, so the only way to recover a
+ * failed transcription was `curl` — which is what happened on 2026-08-22, after a sidecar
+ * came back and the browser still had nothing to offer but "upload a transcript instead".
+ *
+ * Attempts reset and the retry backoff is cleared (ADR 0027), because a person asking for
+ * it now is a different request from the scheduler's own. `409 JOB_NOT_RETRYABLE` if the
+ * job is not finished.
+ */
+export const retryJob = (id: string) => send<JobRecord>('POST', `/api/jobs/${id}/retry`, {});
+
 /* ------------------------------------------------------------ interests */
 
 export const listInterests = () => api<InterestPayload[]>('/api/interests');

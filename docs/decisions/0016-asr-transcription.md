@@ -66,9 +66,15 @@ system would otherwise report success while being wrong:
 - **No model, no fallback.** A sidecar without the ASR model returns `501`, matching what
   `/annotate` already does. Degrading to an empty or whitespace transcript is the named
   failure mode ADR 0002 exists to prevent.
-- **No silent CPU fallback.** ASR on CPU is roughly twenty times slower and otherwise
-  identical, which produces a job that looks like it is working for forty minutes. The
-  sidecar refuses when GPU was configured and is unavailable, and says which.
+- **No silent CPU fallback.** The sidecar refuses when GPU was configured and is
+  unavailable, and says which. The point is the substitution, not the stopwatch: a job that
+  quietly runs somewhere the caller did not ask for gives back no way to tell.
+
+  <!-- CORRECTED 2026-08-23: this bullet used to justify itself with "roughly twenty times
+  slower ... a job that looks like it is working for forty minutes". That number was never
+  measured and is wrong by two orders of magnitude on at least one real machine — see the
+  open question below. The refusal stands; the reasoning under it does not, and a rule
+  defended by a false number is one somebody will eventually be right to ignore. -->
 - **Language mismatch is an error, not a guess.** The decode language is pinned from
   `profile.target_language` rather than detected. Detection still runs, and a detected
   language that disagrees fails the job with both values named. A German course silently
@@ -130,9 +136,24 @@ value is measured against the ADR 0006 corpus, not assumed here.
 
 ## Open question
 
-**Which model size, and is `large-v3` worth its latency?** Resolved by measurement at
-Stage 2's close, not by argument: transcribe both ADR 0006 corpus videos with
-`large-v3` and `medium`, compare word error rate against the hand-corrected transcript, and
-record wall-clock for each. The decision rule is that `medium` wins unless `large-v3`
-reduces WER by enough to change a Stage 4 sentence boundary. Default until then is
-`large-v3`, configurable.
+**Which model size, and is `large-v3` worth its latency?** Resolved by measurement, not by
+argument: transcribe both ADR 0006 corpus videos with each candidate, compare word error
+rate against the hand-corrected transcript, and record wall-clock for each. The decision
+rule is that the smaller model wins unless the larger reduces WER by enough to change a
+Stage 4 sentence boundary. Default until then is `large-v3`, configurable.
+
+**Half-answered, 2026-08-23: latency is not the axis.** One 7-minute file, `large-v3-turbo`,
+`int8`, twenty CPU cores: 134 seconds including the model download — 0.3x real time, with no
+GPU involved at all. This ADR's own "roughly twenty times slower" was never measured and is
+wrong here by two orders of magnitude; it has been corrected above, and the paragraph it was
+defending survives on a different argument. WER is still unmeasured and is now the whole of
+the question.
+
+**The comparison needs more than one run per model.** Two identical requests to the same
+container, same model and options, returned 524 and 542 words. The entire difference was one
+region at the end of the audio where the second run hallucinated across several scripts —
+correctly flagged, so rule 12's machinery worked, but a run-to-run variance larger than the
+difference being measured makes a single transcription per model worthless as evidence. The
+usual cause is `condition_on_previous_text`, which is now a setting and defaults to off
+(ADR 0019's registry). Measure with it off, several runs per model, and report the spread
+alongside the number.

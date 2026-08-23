@@ -34,6 +34,7 @@ describe('configuration', () => {
     // edited without restarting the Python process.
     'P80_ASR_ALIGN',
     'P80_ASR_COMPUTE_TYPE',
+    'P80_ASR_CONDITION_ON_PREVIOUS_TEXT',
     'P80_ASR_DEVICE',
     'P80_ASR_LANG_MIN_PROB',
     'P80_ASR_MODEL',

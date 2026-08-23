@@ -91,6 +91,7 @@ describe('migrations', () => {
       '0001_initial.sql',
       '0002_local_media.sql',
       '0003_media_uploads.sql',
+      '0004_job_retry_backoff.sql',
     ]);
 
     const second = migrate(temp.sqlite);
@@ -99,6 +100,7 @@ describe('migrations', () => {
       '0001_initial.sql',
       '0002_local_media.sql',
       '0003_media_uploads.sql',
+      '0004_job_retry_backoff.sql',
     ]);
   });
 

@@ -5,6 +5,7 @@ import { correctSegment, getTranscript, getVideo, updateVideo } from '../api.js'
 import { useResource } from '../hooks/useResource.js';
 import { useLatestJob } from '../hooks/useLatestJob.js';
 import { describeFailure } from '../components/JobStatus.js';
+import { RetryJob, failureIsRetryable } from '../components/RetryJob.js';
 import {
   MediaPlayer,
   PLAYER_STATE,
@@ -58,6 +59,11 @@ export function VideoDetail() {
   const [selection, setSelection] = useState<TranscriptSelection | null>(null);
   const [pendingSelection, setPendingSelection] = useState<TranscriptSelection | null>(null);
   const [created, setCreated] = useState<ItemPayload | null>(null);
+  // A manual retry leaves the page between two truths for a moment — see the poll below.
+  const [retrying, setRetrying] = useState(false);
+  // Bumped on retry so the single-shot job lookup asks again; it settles its question once
+  // per key, and a retry makes it a new question.
+  const [retryNonce, setRetryNonce] = useState(0);
 
   const positionMs = usePlaybackClock(controls, playerState);
 
@@ -75,12 +81,20 @@ export function VideoDetail() {
   // ASR returning nothing, and a subtitle file that would not parse are one value between
   // them. The job that failed still carries the reason, and unlike the upload panel's copy
   // this is reachable on every later visit, which is when someone actually asks.
-  const failedJob = useLatestJob(transcriptStatus === 'failed' ? id : null, 'TRANSCRIBE');
+  const failedJob = useLatestJob(
+    transcriptStatus === 'failed' ? id : null,
+    'TRANSCRIBE',
+    retryNonce,
+  );
 
   // A transcript still parsing resolves on its own. Polling here rather than asking the
   // user to refresh is the difference between "still working" and a page that looks broken.
   useEffect(() => {
-    if (transcriptStatus !== 'parsing') return;
+    // `retrying` extends the same poll across the gap a manual retry opens: the job is
+    // queued but `transcript_status` still reads `failed` until the worker claims it and
+    // writes `parsing`, so without this the page would sit on the old error and look as
+    // though the button did nothing.
+    if (transcriptStatus !== 'parsing' && !retrying) return;
     const timer = window.setInterval(() => {
       video.reload();
       transcript.reload();
@@ -88,7 +102,12 @@ export function VideoDetail() {
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `reload` is stable; the
     // resource objects are not.
-  }, [transcriptStatus]);
+  }, [transcriptStatus, retrying]);
+
+  // The retry has been picked up; the ordinary `parsing` poll owns it from here.
+  useEffect(() => {
+    if (retrying && transcriptStatus !== 'failed') setRetrying(false);
+  }, [retrying, transcriptStatus]);
 
   /**
    * A backstop source of a video's duration.
@@ -200,6 +219,19 @@ export function VideoDetail() {
               // only what is certain rather than borrowing the other case's explanation.
               <p>Nothing was stored.</p>
             )}
+            {failedJob.job?.status === 'failed' && !retrying && (
+              <RetryJob
+                jobId={failedJob.job.id}
+                label="Transcribe again"
+                retryable={failureIsRetryable(failedJob.job.errorJson)}
+                onRetried={() => {
+                  setRetrying(true);
+                  setRetryNonce((n) => n + 1);
+                  video.reload();
+                }}
+              />
+            )}
+            {retrying && <p className="hint">Queued again. This page will update on its own.</p>}
             <p className="hint">
               The media file is untouched.{' '}
               <Link to={`/videos/${id}/transcript`}>Upload a transcript instead</Link>, which

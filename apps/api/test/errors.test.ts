@@ -1,6 +1,16 @@
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { P80Error } from '@p80/core';
+import { P80Error, findRepoRoot } from '@p80/core';
 import { createTestApi, type TestApi } from './helpers.js';
+
+/** Counted rather than hardcoded: the number is a property of the migrations directory,
+ *  and pinning it here makes every future migration edit this file for a reason that has
+ *  nothing to do with the error envelope. */
+const migrationCount = () =>
+  readdirSync(join(findRepoRoot(process.cwd()), 'packages/database/migrations')).filter(
+    (name) => name.endsWith('.sql'),
+  ).length;
 
 /**
  * Stage 1 exit criterion 8 (contract-derived) — every failure leaves the API in the
@@ -77,7 +87,7 @@ describe('health', () => {
     expect(res.json()).toMatchObject({
       status: 'ok',
       service: 'api',
-      database: { reachable: true, migrationsApplied: 3 },
+      database: { reachable: true, migrationsApplied: migrationCount() },
       // Spec §5.2: no provider configured is a normal state, not a degraded one. During
       // Stages 1-6 vLLM is simply not running.
       inference: { mode: 'local', configured: false },

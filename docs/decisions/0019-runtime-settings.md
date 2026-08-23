@@ -21,7 +21,7 @@ decision, and making it editable from a running process buys nothing. Two are di
   (ADR 0015), so the first run is a text-editor round trip before the application can do
   anything at all.
 - **`P80_ASR_REQUIRE_GPU`** is a per-run decision, not an install-time one. Its purpose is
-  to make an absent GPU loud rather than silently twenty times slower (ADR 0016). A user
+  to make an absent GPU loud rather than a silent move to another device (ADR 0016). A user
   who decides to accept one slow CPU run should not have to restart the worker to do it,
   and — more to the point — should not have to remember to set it back afterwards.
 

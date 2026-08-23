@@ -246,8 +246,8 @@ interface AsrOptions {
   device: string;
   computeType: string;
   /** Refuse rather than fall back to CPU. The default is `true`, because CPU inference is
-   *  roughly twenty times slower and otherwise identical — a job that looks healthy for
-   *  forty minutes. The setting exists so accepting that is a deliberate act. */
+   *  a device the caller did not ask for, at a cost that depends entirely on the model.
+   *  The setting exists so accepting that is a deliberate act. */
   requireGpu: boolean;
   align: boolean;
   languageMinProbability: number;
@@ -281,7 +281,8 @@ success while being wrong (ADR 0016 §3):
 - **A sidecar with no ASR model returns 501**, matching `/annotate`. It never degrades to an
   empty transcript.
 - **It never falls back to CPU silently.** GPU configured and unavailable is a refusal
-  naming which, not a job that runs twenty times slower and looks healthy.
+  naming which, not a job that quietly runs somewhere else. How much CPU costs depends on
+  the model and is not the reason for the rule.
 - **A language mismatch is an error**, not a guess.
 
 Degraded mode: with no ASR available, ingestion falls back to the user-supplied upload path

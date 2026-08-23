@@ -45,6 +45,7 @@ describe('the ASR sidecar request body', () => {
         requireGpu: false,
         align: false,
         languageMinProbability: 0.75,
+        conditionOnPreviousText: false,
       },
     });
 
@@ -58,6 +59,7 @@ describe('the ASR sidecar request body', () => {
         require_gpu: false,
         align: false,
         language_min_probability: 0.75,
+        condition_on_previous_text: false,
       },
     });
   });
@@ -86,6 +88,7 @@ describe('the ASR sidecar request body', () => {
         requireGpu: false,
         align: false,
         languageMinProbability: 0,
+        conditionOnPreviousText: false,
       },
     });
 
@@ -93,5 +96,6 @@ describe('the ASR sidecar request body', () => {
     expect(options.require_gpu).toBe(false);
     expect(options.align).toBe(false);
     expect(options.language_min_probability).toBe(0);
+    expect(options.condition_on_previous_text).toBe(false);
   });
 });

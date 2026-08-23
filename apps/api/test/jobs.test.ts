@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { ERROR_CODES, P80Error } from '@p80/core';
 import { claimNextJob, enqueueJob, failJob } from '@p80/database';
 import { createTestApi, type TestApi } from './helpers.js';
 
@@ -63,18 +64,19 @@ describe('GET /api/jobs', () => {
     api = await createTestApi();
     const { transcribe } = seedPipeline(api, VIDEO);
 
-    // Exhaust the attempts the way the worker does. Claiming is what increments
-    // `attempt_count`, so failing three times without claiming would leave the row
-    // `pending` forever — which is also why the real ASR failure burned all three attempts
-    // in 25 ms.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      claimNextJob(api.server.handle, 'test-worker', ['TRANSCRIBE']);
-      failJob(
-        api.server.handle,
-        transcribe.id,
-        new Error('No ASR model is installed in the sidecar.'),
-      );
-    }
+    // The real failure, in the shape the sidecar actually produces it: a 501 saying this
+    // build cannot transcribe. One attempt, because ADR 0027 believes the flag — before
+    // that it burned all three in 25 ms and reported a setup problem as a broken file.
+    claimNextJob(api.server.handle, 'test-worker', ['TRANSCRIBE']);
+    failJob(
+      api.server.handle,
+      transcribe.id,
+      new P80Error(
+        ERROR_CODES.ASR_UNAVAILABLE,
+        'No ASR model is installed in the sidecar.',
+        { statusCode: 501, retryable: false },
+      ),
+    );
 
     const res = await api.server.app.inject({
       method: 'GET',
@@ -85,8 +87,11 @@ describe('GET /api/jobs', () => {
     expect(job.status).toBe('failed');
     // The whole point of the lookup: `transcript_status` can only say `failed`, and this
     // is where the sentence explaining it comes from.
+    expect(job.attemptCount).toBe(1);
     expect(job.errorJson).toMatchObject({
       message: 'No ASR model is installed in the sidecar.',
+      code: ERROR_CODES.ASR_UNAVAILABLE,
+      retryable: false,
     });
   });
 

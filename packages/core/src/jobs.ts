@@ -73,4 +73,25 @@ export interface JobRecord {
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
+  /** The earliest this job may be claimed. Null is now; a value is a retry serving its
+   *  backoff (ADR 0027). */
+  availableAt: number | null;
+}
+
+/**
+ * How long a failed job waits before it may be claimed again, indexed by the attempt that
+ * just failed. The last entry repeats for any further attempts.
+ *
+ * A table rather than a formula, because with `max_attempts` of 3 there are only ever two
+ * waits and an explicit pair is something an operator can predict. Sized against what a
+ * retry is actually outlasting here: a sidecar container coming back up, or a model being
+ * loaded for the first time. Long enough to be worth waiting for, short enough that a
+ * transient failure does not look like a hang.
+ */
+export const RETRY_BACKOFF_MS: readonly number[] = [5_000, 30_000];
+
+/** When a job that has just failed its `attempt`th try may be claimed again. */
+export function retryAvailableAt(attempt: number, at: number): number {
+  const index = Math.min(Math.max(attempt, 1), RETRY_BACKOFF_MS.length) - 1;
+  return at + RETRY_BACKOFF_MS[index]!;
 }

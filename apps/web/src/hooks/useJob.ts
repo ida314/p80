@@ -22,8 +22,12 @@ export interface JobProgress {
  * rather than here — they are decisions about how P80 behaves, they are unit-tested, and
  * the TUI needs the same numbers. This hook is the part that cannot be a pure function:
  * a timer and a cancellation flag.
+ *
+ * Polling stops at a terminal state, which is right until something restarts the job.
+ * `nonce` is how a caller says that happened: a manual retry moves a settled job back to
+ * `pending`, and without being told, this hook would sit on the old failure forever.
  */
-export function useJob(jobId: string | null): JobProgress {
+export function useJob(jobId: string | null, nonce = 0): JobProgress {
   const [job, setJob] = useState<JobRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stalled, setStalled] = useState(false);
@@ -70,7 +74,7 @@ export function useJob(jobId: string | null): JobProgress {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [jobId]);
+  }, [jobId, nonce]);
 
   return {
     job,

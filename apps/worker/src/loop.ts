@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { hostname } from 'node:os';
-import type { Logger } from '@p80/core';
+import { ERROR_CODES, P80Error, type Logger } from '@p80/core';
 import {
   claimNextJob,
   completeJob,
@@ -70,7 +70,19 @@ export function createWorker(options: WorkerOptions): Worker {
     if (!handler) {
       // Claimed but unrunnable. Fail it loudly rather than leaving it `running`
       // forever — an invisible stuck job is worse than a visible failed one.
-      failJob(handle, job.id, new Error(`No handler registered for ${job.jobType}`));
+      //
+      // Non-retryable, and definitionally so: no amount of waiting registers a handler in
+      // a process that is already running. Two further attempts would only bury the one
+      // useful line under two copies of itself (ADR 0027).
+      failJob(
+        handle,
+        job.id,
+        new P80Error(
+          ERROR_CODES.JOB_NOT_RETRYABLE,
+          `No handler registered for ${job.jobType}`,
+          { statusCode: 500, retryable: false, details: { jobType: job.jobType } },
+        ),
+      );
       jobLogger.error('no handler registered');
       return job.id;
     }

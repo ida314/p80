@@ -25,6 +25,7 @@ def _settings(**overrides) -> asr.Settings:
         "require_gpu": True,
         "align": True,
         "language_min_probability": 0.5,
+        "condition_on_previous_text": False,
     }
     base.update(overrides)
     return asr.Settings(**base)
@@ -77,7 +78,7 @@ class TestRefusals:
 
 
 class TestDeviceGuard:
-    """CPU fallback is the failure that looks like success for forty minutes."""
+    """A silent device substitution is the failure, whatever it costs in seconds."""
 
     def test_refuses_when_cuda_is_requested_and_unavailable(self, monkeypatch) -> None:
         fake = type("T", (), {"cuda": type("C", (), {"is_available": staticmethod(lambda: False)})})
@@ -86,7 +87,11 @@ class TestDeviceGuard:
         with pytest.raises(asr.AsrUnavailable) as exc:
             asr.assert_device(_settings())
 
-        assert "twenty times slower" in str(exc.value)
+        # Names the device and the way out, and claims nothing about speed — the number
+        # that used to be here was folklore, and wrong on this machine by two orders of
+        # magnitude (ADR 0016).
+        assert "CUDA was requested and is unavailable" in str(exc.value)
+        assert "P80_ASR_REQUIRE_GPU=0" in str(exc.value)
         # Retryable: the GPU is usually back after a driver reload or another job finishes.
         assert exc.value.retryable is True
 
@@ -310,3 +315,141 @@ def _word(word: str, start: float | None, end: float | None, probability: float 
         (),
         {"word": word, "start": start, "end": end, "probability": probability},
     )()
+
+
+class TestModelCache:
+    """The model is loaded once, not once per request.
+
+    `WhisperModel(...)` used to be constructed inside `transcribe()`, so every job paid a
+    full multi-gigabyte load before decoding any audio. The first measured run — 7 minutes
+    of audio in 134 s — was paying it, and so was every run after it.
+    """
+
+    def setup_method(self) -> None:
+        asr._MODEL_CACHE.clear()
+        asr._MODEL_KEY = None
+
+    def teardown_method(self) -> None:
+        asr._MODEL_CACHE.clear()
+        asr._MODEL_KEY = None
+
+    def _stub(self, monkeypatch) -> list[tuple]:
+        """A fake backend that records every construction."""
+        built: list[tuple] = []
+
+        class FakeWhisperModel:
+            def __init__(self, model_id, device, compute_type) -> None:
+                built.append((model_id, device, compute_type))
+
+        module = type("M", (), {"WhisperModel": FakeWhisperModel})
+        monkeypatch.setitem(__import__("sys").modules, "faster_whisper", module)
+        return built
+
+    def test_the_same_settings_load_the_model_once(self, monkeypatch) -> None:
+        built = self._stub(monkeypatch)
+
+        first = asr._load_model("large-v3-turbo", "cpu", "int8")
+        second = asr._load_model("large-v3-turbo", "cpu", "int8")
+
+        assert first is second
+        assert built == [("large-v3-turbo", "cpu", "int8")]
+
+    def test_a_changed_device_is_a_different_model(self, monkeypatch) -> None:
+        """The key is the whole triple, and this is why.
+
+        All three are per-request overridable (ADR 0019 §5). Keyed on the model name alone,
+        a request that asked for `cuda` would be handed back the CPU model already in the
+        cache — which is precisely the silent downgrade this module refuses to perform.
+        """
+        built = self._stub(monkeypatch)
+
+        asr._load_model("large-v3-turbo", "cpu", "int8")
+        asr._load_model("large-v3-turbo", "cuda", "int8")
+        asr._load_model("large-v3-turbo", "cuda", "float16")
+
+        assert built == [
+            ("large-v3-turbo", "cpu", "int8"),
+            ("large-v3-turbo", "cuda", "int8"),
+            ("large-v3-turbo", "cuda", "float16"),
+        ]
+
+    def test_only_one_model_is_held_at_a_time(self, monkeypatch) -> None:
+        # Two of these do not fit on a machine where one is already the largest thing
+        # running, so the old one is dropped before the new one is built.
+        self._stub(monkeypatch)
+
+        asr._load_model("large-v3-turbo", "cpu", "int8")
+        asr._load_model("medium", "cpu", "int8")
+
+        assert len(asr._MODEL_CACHE) == 1
+
+
+class TestHallucinationConditioning:
+    def test_conditioning_is_off_by_default(self) -> None:
+        """Contradicting the backend's own default, deliberately.
+
+        Feeding each window the previous window's text lets an invented phrase become the
+        next window's prompt. Two identical runs of the same 7-minute file differed by 18
+        words, the whole difference being one region at the end where the second run
+        produced text across several scripts. A transcript that varies run to run cannot be
+        compared against another model's, which is what ADR 0016's open question needs.
+        """
+        assert asr.DEFAULTS["condition_on_previous_text"] is False
+        assert asr.Settings.from_env({}).condition_on_previous_text is False
+
+    def test_it_is_still_a_setting(self) -> None:
+        # Conditioning genuinely helps continuous speech with consistent terminology. Off
+        # is a default, not a removal.
+        assert (
+            asr.Settings.from_env({}).merged({"condition_on_previous_text": True})
+            .condition_on_previous_text
+            is True
+        )
+
+    def test_it_reaches_the_decoder(self, monkeypatch, tmp_path) -> None:
+        """The setting is only worth having if it arrives.
+
+        Four of the five layers it crosses are typed and would fail loudly. This one is a
+        keyword argument on a call into a third-party library, which is the layer where a
+        plumbed-but-unused option goes unnoticed — as it did for the whole of Stage 2.
+        """
+        seen: dict[str, object] = {}
+
+        class FakeWhisperModel:
+            def __init__(self, *_args, **_kwargs) -> None: ...
+
+            def transcribe(self, _path, **kwargs):
+                seen.update(kwargs)
+                info = type(
+                    "I", (), {"language": "de", "language_probability": 1.0, "duration": 1.0}
+                )()
+                return iter(()), info
+
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "faster_whisper",
+            type("M", (), {"WhisperModel": FakeWhisperModel}),
+        )
+        asr._MODEL_CACHE.clear()
+        asr._MODEL_KEY = None
+
+        media = tmp_path / "a.mp4"
+        media.write_bytes(b"not a real container")
+
+        # The fake yields no segments, so the empty-transcript refusal fires after the
+        # decode call — which is the correct behaviour and lands after the only thing this
+        # test is looking at.
+        with pytest.raises(asr.AsrUnavailable):
+            asr.transcribe(str(media), "de", _settings(require_gpu=False, device="cpu"))
+        assert seen["condition_on_previous_text"] is False
+        # And the two the ADRs care about most came along unchanged.
+        assert seen["word_timestamps"] is True
+        assert seen["vad_filter"] is True
+
+        with pytest.raises(asr.AsrUnavailable):
+            asr.transcribe(
+                str(media),
+                "de",
+                _settings(require_gpu=False, device="cpu", condition_on_previous_text=True),
+            )
+        assert seen["condition_on_previous_text"] is True

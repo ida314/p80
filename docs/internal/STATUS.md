@@ -337,12 +337,8 @@ appear *sooner*, and the case it would have helped does not arise, since the vid
 reads a settled job rather than polling one. Telling "no worker" from "worker busy" needs
 more than a clock.
 
-Three follow-ups, deliberately not done here: the retry bug (`failJob` ignores
-`P80Error.retryable` and `loop.ts` only sleeps when nothing was claimed, so a non-retryable
-failure burns all three attempts instantly and a retryable one re-runs with no backoff); a
-retry button, since `POST /api/jobs/:id/retry` exists and no client uses it; and caching
-`WhisperModel`, which `asr.py:240` currently constructs inside `transcribe()` on every
-request.
+~~Three follow-ups, deliberately not done here: the retry bug; a retry button; and caching
+`WhisperModel`.~~ **All three fixed 2026-08-23 — see above.**
 
 **Next: Docker.** Agreed direction — all four processes, superseding ADR 0021. Not started,
 no ADR yet, container scope undecided. All GPU access on this machine goes through SIR on
@@ -393,7 +389,8 @@ new stage list.
 
 - ~~**`scripts/smoke.sh:441` writes `P80_ASR_MODEL: medium` into the live database and never
   restores it.**~~ **Fixed 2026-08-23 — see below.**
-- **Transcription is not reproducible run to run.** Two identical requests to the same
+- ~~**Transcription is not reproducible run to run.**~~ **`condition_on_previous_text` is
+  now plumbed and defaults to off (2026-08-23).** The original note: Two identical requests to the same
   container, same model and options, gave 524 and 542 words. The entire difference was one
   region at the end of the audio, where the second run hallucinated across several scripts
   (`Edhoff 1983 -Ball ...`). It was correctly flagged — three `low_asr_confidence`
@@ -408,6 +405,46 @@ new stage list.
 pointing it at an unmounted directory cannot work until the unit restarts. It fails
 honestly — `validateMediaRoot` runs inside the container and the preflight endpoint returns
 `not_found` — but the capability is narrower than it was.
+
+## The four recorded defects, cleared (2026-08-23)
+
+**ADR 0027 accepted.** All four follow-ups recorded on 2026-08-22 and 2026-08-23, plus the
+CPU-speed folklore.
+
+| What | State |
+|---|---|
+| ADR 0027 written and accepted; `02-database.md` and `03-api.md` §8 amended | **done** |
+| Migration 0004 `jobs.available_at` + Drizzle mirror + rebuilt claim index | **done** |
+| `failJob` honours `P80Error.retryable`; `error_json` keeps code/retryable/details | **done** |
+| Backoff `[5s, 30s]` in the row, so the claim query does the waiting | **done** |
+| Unregistered handler is non-retryable; `retryJob` clears the backoff | **done** |
+| `RetryJob` on `VideoDetail` and `JobStatus`; `useJob`/`useLatestJob` take a nonce | **done** |
+| `WhisperModel` cached on `(model, device, compute_type)`, size one | **done** |
+| `P80_ASR_CONDITION_ON_PREVIOUS_TEXT`, default **off**, all five layers | **done** |
+| CPU-speed folklore corrected at all eight sites | **done** |
+
+**2759 TypeScript tests / 59 files** and **30 Python tests**, nine packages typechecking.
+
+- **The retry semantics were broken in both directions and are now one decision each.** A
+  `P80Error` saying `retryable: false` ends the job at that attempt; anything that is not a
+  `P80Error` is still retried, because `retryable` defaults to `false` and reading it off
+  every error would have made one attempt the rule for ordinary bugs.
+- **The backoff lives in the row, not in the worker.** `apps/worker/src/loop.ts` is
+  unchanged: `claimNextJob` skips a job that is still waiting, and the existing poll does
+  the rest. Sleeping the worker would have stalled every unrelated job for the same
+  interval.
+- **`POST /api/jobs/:id/retry` finally has a caller.** Both failure surfaces offer it, and
+  both polling hooks take a nonce — a retry button in front of a stopped poll would restart
+  the work and go on showing the old error. `test/job-retry-ui.test.ts` holds all of it.
+- **The folklore was in eight places, not the two recorded here** — including a runtime
+  error message, a settings description the user reads on the page, two contract comments,
+  and a Python test asserting the wrong number verbatim. Corrected without quoting a new
+  multiple: the honest statement is that it depends on the model. `P80_ASR_REQUIRE_GPU`
+  keeps its `true` default, and its justification is now the silent device substitution
+  rather than a stopwatch. Flipping the default would be a decision and needs its own ADR.
+- **ADR 0016's open question is re-scoped**, not answered: latency is not the axis, WER is
+  unmeasured, and it now records that a single run per model cannot measure a difference
+  smaller than the run-to-run variance.
 
 ## Deploy and rollback, exercised (2026-08-23)
 

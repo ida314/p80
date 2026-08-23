@@ -175,6 +175,9 @@ describe('ASR defaults', () => {
       require_gpu: ASR_DEFAULTS.P80_ASR_REQUIRE_GPU ? 'True' : 'False',
       align: ASR_DEFAULTS.P80_ASR_ALIGN ? 'True' : 'False',
       language_min_probability: String(ASR_DEFAULTS.P80_ASR_LANG_MIN_PROB),
+      condition_on_previous_text: ASR_DEFAULTS.P80_ASR_CONDITION_ON_PREVIOUS_TEXT
+        ? 'True'
+        : 'False',
     });
   });
 });
